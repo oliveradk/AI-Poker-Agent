@@ -62,8 +62,12 @@ def sample_action(
     valid_action_mask = np.array([action in valid_actions for action in REAL_ACTIONS], dtype=float)
     # compute ucb 
     ucb = np.zeros(N_ACTIONS)
-    if use_ucb: # TODO: what do we do with dividing by 0?
-        ucb += c * np.sqrt(np.log(N[oppo_last_action, ehs_bin, :].sum()) / N[oppo_last_action, ehs_bin, :])
+    if use_ucb:
+        if N[oppo_last_action, ehs_bin, :].sum() == 0:
+            return np.random.choice(N_ACTIONS)
+        ucb += c * np.sqrt(
+            np.log(N[oppo_last_action, ehs_bin, :].sum()) / (N[oppo_last_action, ehs_bin, :])
+        )
     # sample action 
     vals = Q[oppo_last_action, ehs_bin, :] + ucb
     return np.argmax(vals * valid_action_mask)
