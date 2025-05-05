@@ -9,6 +9,14 @@ N_ACTIONS = len(REAL_ACTIONS)
 
 # TODO: implement actual MCTS
 
+def _get_action_bin(action: dict | None):
+    if action is None:
+        return -1 
+    action = action["action"]
+    if action not in REAL_ACTIONS:
+        return -1 
+    return REAL_ACTIONS.index(action)
+
 def str_to_card(card_str: str) -> Card:
     return Card.new(f"{card_str[1]}{card_str[0].lower()}")
 
@@ -48,6 +56,11 @@ def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000, ev
         return n_bins - 1
     return ehs_bin
 
+def get_obs(hole_card, round_state, n_bins, evaluator):
+    ehs_bin = get_EHS(hole_card, round_state["community_card"], n_bins, evaluator=evaluator)
+    oppo_last_act_idx = _get_action_bin(_get_last_action(round_state))
+    return oppo_last_act_idx, ehs_bin
+
 # NOTE: this is technically variable for different actions...
 def get_exploration_value(round_state, uuid, n_rounds: int=4, n_raises: int=3, k=0.5):
     pot_size = round_state["pot"]["main"]["amount"] # ignore side pots
@@ -72,7 +85,7 @@ def update(Q, N, oppo_last_act_idx, ehs_bin, action_idx, reward):
     Q[oppo_last_act_idx, ehs_bin, action_idx] += update
     
 
-def compute_reward(winners, hand_info, round_state, uuid):
+def compute_reward(winners, round_state, uuid):
     # get player bets throughout round 
     player_bets = 0
     for street_bets in round_state["action_histories"].values():
@@ -94,31 +107,33 @@ def compute_reward(winners, hand_info, round_state, uuid):
         pot_reward = 0
     return pot_reward - player_bets
 
+def get_a_set(valid_actions):
+    valid_acts = [action["action"] for action in valid_actions]
+    return [i for i, action in enumerate(REAL_ACTIONS) if action in valid_acts]
+
+
+def select_action(Q, N, obs, a_set, c):
+    ucb = c * np.sqrt(
+        np.log(N[obs[0], obs[1], :].sum()) / (N[obs[0], obs[1], :])
+    )
+    vals = Q[obs[0], obs[1], :] + ucb
+    vals[np.array(a_set)] = float("-inf")
+    return np.argmax(vals)
 
  # TODO: implement "smooth" ucb
 def sample_action(
     Q: np.ndarray, 
     N: np.ndarray, 
-    oppo_last_action: int, 
-    ehs_bin: int, 
+    obs: tuple[int, int],
     valid_actions: list[dict], 
-    use_ucb: bool=True, 
     c: float=1.4
 ):
-    # get valid action indices
-    valid_actions = [action["action"] for action in valid_actions]
-    valid_action_mask = np.array([action in valid_actions for action in REAL_ACTIONS], dtype=float)
-    # compute ucb 
-    ucb = np.zeros(N_ACTIONS)
-    if use_ucb:
-        if N[oppo_last_action, ehs_bin, :].sum() == 0:
-            return np.random.choice(N_ACTIONS)
-        ucb += c * np.sqrt(
-            np.log(N[oppo_last_action, ehs_bin, :].sum()) / (N[oppo_last_action, ehs_bin, :])
-        )
-    # sample action 
-    vals = Q[oppo_last_action, ehs_bin, :] + ucb
-    return np.argmax(vals * valid_action_mask)
+    a_set = get_a_set(valid_actions)
+    if N[obs[0], obs[1], :].sum() == 0:
+        action_idx = np.random.choice(a_set)
+    else:
+        action_idx = select_action(Q, N, obs, a_set, c)
+    return action_idx
 
 def _get_last_action(round_state):
     round_actions = round_state["action_histories"][round_state["street"]]
@@ -135,6 +150,7 @@ class QLearningPlayer(BasePokerPlayer):
         self.n_ehs_bins = n_ehs_bins
         # Q[opponent_last_action, hand_strength_bin, action_idx]
         # Q[-1, :, :] is reserved for when you go first
+        # TODO: add action history
         self.is_training = is_training
         self.Q = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.N = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
@@ -156,17 +172,15 @@ class QLearningPlayer(BasePokerPlayer):
     def declare_action(self, valid_actions, hole_card, round_state):
        if len(valid_actions) == 1: # not a real action if no choice
            return valid_actions[0]["action"]
-       # get EM
-       ehs_bin = get_EHS(hole_card, round_state["community_card"], self.n_ehs_bins, evaluator=self.evaluator)
-       # get last action
-       oppo_last_act_idx = self._get_action_bin(_get_last_action(round_state))
+       # get state
+       obs = get_obs(hole_card, round_state, self.n_ehs_bins, self.evaluator)
        # compute exploration value from max payoff 
        c = get_exploration_value(round_state, self.uuid, n_rounds=4, n_raises=3, k=self.k)
        # sample action
-       action_idx = sample_action(self.Q, self.N, oppo_last_act_idx, ehs_bin, valid_actions, c=c)
+       action_idx = sample_action(self.Q, self.N, obs, valid_actions, c=c)
        # update history
        if self.is_training:
-           self.history.append((oppo_last_act_idx, ehs_bin, action_idx))
+           self.history.append(obs + (action_idx,))
        return REAL_ACTIONS[action_idx]
     
 
@@ -186,7 +200,7 @@ class QLearningPlayer(BasePokerPlayer):
 
     def receive_round_result_message(self, winners, hand_info, round_state):
         # compute reward 
-        reward = compute_reward(winners, hand_info, round_state, self.uuid)
+        reward = compute_reward(winners, round_state, self.uuid)
         # update Q function, N function
         for (oppo_last_act_idx, ehs_bin, action_idx) in self.history:
             update(self.Q, self.N, oppo_last_act_idx, ehs_bin, action_idx, reward)
