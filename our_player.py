@@ -108,6 +108,10 @@ class MCTSPlayer(BasePokerPlayer):
         self.epsilon = 0.1 # TODO: set on schedule
         self.history = []
         self.evaluator = deuces.Evaluator()
+
+        # logging 
+        self.round_results = []
+        
     
     def load_Q(self, Q: np.ndarray | None = None, Q_path: str | None = None):
         if Q is not None:
@@ -149,6 +153,28 @@ class MCTSPlayer(BasePokerPlayer):
             self._update(oppo_last_act_idx, ehs_bin, action_idx, reward)
         # restart history
         self.history = []
+        # log result
+        self._log_result(winners, hand_info, round_state, reward)
+
+    
+    def _log_result(self, winners, hand_info, round_state, reward):
+        # Calculate pot size
+        pot_size = round_state["pot"]["main"]["amount"]
+        for side_pot in round_state["pot"]["side"]:
+            pot_size += side_pot["amount"]
+        seat = [s for s in round_state["seats"] if s["uuid"] == self.uuid][0]
+        stack = seat["stack"]
+        
+        # Log result
+        result = {
+            "round": round_state["round_count"],
+            "reward": reward,
+            "pot_size": pot_size,
+            "street": round_state["street"],
+            "community_cards": round_state["community_card"],
+            "stack": stack,
+        }
+        self.round_results.append(result)
     
     def _update(self, oppo_last_act_idx, ehs_bin, action_idx, reward):
         self.N[oppo_last_act_idx, ehs_bin, action_idx] += 1
@@ -161,7 +187,7 @@ class MCTSPlayer(BasePokerPlayer):
         # win loss reward
         # TODO: implement pot weighed reward, expected value of winnings, etc.
         won = any([winner["uuid"] == self.uuid for winner in winners])
-        reward = 1.0 if won else 0.0
+        reward = 1.0 / len(winners) if won else 0.0
         return reward
 
     

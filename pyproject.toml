@@ -11,6 +11,7 @@ pypokerengine = "^1.0.1"
 ipdb = "^0.13.13"
 numpy = "^2.2.5"
 deuces = "^0.2.1"
+matplotlib = "^3.10.1"
 
 
 [build-system]
