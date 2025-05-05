@@ -7,7 +7,8 @@ from deuces import Deck, Card
 REAL_ACTIONS = ["fold", "call", "raise"]
 N_ACTIONS = len(REAL_ACTIONS)
 
-# TODO: implement actual MCTS
+EVALUATOR = deuces.Evaluator()
+
 
 def _get_action_bin(action: dict | None):
     if action is None:
@@ -21,12 +22,10 @@ def str_to_card(card_str: str) -> Card:
     return Card.new(f"{card_str[1]}{card_str[0].lower()}")
 
 # TODO: use hand evaluator
-def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000, evaluator: deuces.Evaluator | None = None):
+def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
     """
     Implements expected hand strength using monte-carlo simulation
     """
-    if evaluator is None:
-        evaluator = deuces.Evaluator()
     # get set of remaining possible cards
     private_cards = [str_to_card(card) for card in private_cards]
     community_cards = [str_to_card(card) for card in community_cards]
@@ -42,8 +41,8 @@ def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000, ev
         sampled_cards = random.sample(remaining_cards, community_needed + opponent_needed)
         opponent_cards = sampled_cards[:opponent_needed]
         board = community_cards + sampled_cards[opponent_needed:]
-        our_hand_rank = evaluator.evaluate(private_cards, board)
-        opponent_hand_rank = evaluator.evaluate(opponent_cards, board)
+        our_hand_rank = EVALUATOR.evaluate(private_cards, board)
+        opponent_hand_rank = EVALUATOR.evaluate(opponent_cards, board)
         if our_hand_rank > opponent_hand_rank:
             wins += 1
         elif our_hand_rank == opponent_hand_rank:
@@ -56,8 +55,8 @@ def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000, ev
         return n_bins - 1
     return ehs_bin
 
-def get_obs(hole_card, round_state, n_bins, evaluator):
-    ehs_bin = get_EHS(hole_card, round_state["community_card"], n_bins, evaluator=evaluator)
+def get_obs(hole_card, round_state, n_bins):
+    ehs_bin = get_EHS(hole_card, round_state["community_card"], n_bins)
     oppo_last_act_idx = _get_action_bin(_get_last_action(round_state))
     return oppo_last_act_idx, ehs_bin
 
@@ -156,7 +155,6 @@ class QLearningPlayer(BasePokerPlayer):
         self.N = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.k = k
         self.history = []
-        self.evaluator = deuces.Evaluator()
         
         # logging 
         self.round_results = []
@@ -173,7 +171,7 @@ class QLearningPlayer(BasePokerPlayer):
        if len(valid_actions) == 1: # not a real action if no choice
            return valid_actions[0]["action"]
        # get state
-       obs = get_obs(hole_card, round_state, self.n_ehs_bins, self.evaluator)
+       obs = get_obs(hole_card, round_state, self.n_ehs_bins)
        # compute exploration value from max payoff 
        c = get_exploration_value(round_state, self.uuid, n_rounds=4, n_raises=3, k=self.k)
        # sample action
