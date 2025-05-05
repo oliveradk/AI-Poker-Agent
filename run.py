@@ -12,10 +12,12 @@ from our_player import MCTSPlayer
 # setup config
 CONFIG = {
     "initial_stack": 10000,
-    "max_round": 1000,
+    "max_round": 500,
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
+    "use_stack_diff": True,
     "seed": 42,
+    "k": 0.1,
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 os.makedirs(exp_dir, exist_ok=True)
@@ -24,7 +26,7 @@ random.seed(CONFIG["seed"])
 
 # run game
 config = setup_config(max_round=CONFIG["max_round"], initial_stack=CONFIG["initial_stack"], small_blind_amount=CONFIG["small_blind_amount"])
-my_player = MCTSPlayer(n_ehs_bins=CONFIG["n_ehs_bins"], is_training=True)
+my_player = MCTSPlayer(n_ehs_bins=CONFIG["n_ehs_bins"], is_training=True, use_stack_diff=CONFIG["use_stack_diff"], k=CONFIG["k"])
 config.register_player(name="random_player", algorithm=RandomPlayer())
 config.register_player(name="mcts_player", algorithm=my_player)
 game_result = start_poker(config, verbose=1)
@@ -46,7 +48,8 @@ fig, ax1 = plt.subplots()
 ax2 = ax1.twinx()
 ax1.plot(stack_over_time, label="stack", color="orange")
 ax2.plot(mean_reward_over_time, label="mean reward", color="blue")
-ax2.set_ylim(0, 1)
+if not CONFIG["use_stack_diff"]:
+    ax2.set_ylim(0, 1)
 ax1.set_ylim(0, CONFIG["initial_stack"] * 2)
 # plot y=INITIAL_STACK line
 ax1.plot([0, CONFIG["max_round"]], [CONFIG["initial_stack"], CONFIG["initial_stack"]], color="black", linestyle="--")
