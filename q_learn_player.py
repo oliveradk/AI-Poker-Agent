@@ -12,6 +12,7 @@ N_ACTIONS = len(REAL_ACTIONS)
 def str_to_card(card_str: str) -> Card:
     return Card.new(f"{card_str[1]}{card_str[0].lower()}")
 
+# TODO: use hand evaluator
 def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000, evaluator: deuces.Evaluator | None = None):
     """
     Implements expected hand strength using monte-carlo simulation
@@ -63,6 +64,37 @@ def get_exploration_value(round_state, uuid, n_rounds: int=4, n_raises: int=3, k
     future_round_value = max_rounds * max_raise
     return pot_size + k * (round_value + future_round_value)
 
+def update(Q, N, oppo_last_act_idx, ehs_bin, action_idx, reward):
+    N[oppo_last_act_idx, ehs_bin, action_idx] += 1
+    N_s = N[oppo_last_act_idx, ehs_bin, action_idx]
+    Q_s = Q[oppo_last_act_idx, ehs_bin, action_idx]
+    update = (reward - Q_s) / N_s
+    Q[oppo_last_act_idx, ehs_bin, action_idx] += update
+    
+
+def compute_reward(winners, hand_info, round_state, uuid):
+    # get player bets throughout round 
+    player_bets = 0
+    for street_bets in round_state["action_histories"].values():
+        for bet in street_bets:
+            if bet["uuid"] == uuid:
+                if "amount" not in bet:
+                    print(bet)
+                player_bets += bet.get("paid", bet.get("amount", 0))
+    # get pot size
+    pot_size = round_state["pot"]["main"]["amount"]
+    for side_pot in round_state["pot"]["side"]:
+        pot_size += side_pot["amount"]
+    # compute pot reward
+    if len(winners) == 1 and winners[0]["uuid"] == uuid:
+        pot_reward = pot_size 
+    elif len(winners) == 2:
+        pot_reward = pot_size / 2
+    else:
+        pot_reward = 0
+    return pot_reward - player_bets
+
+
  # TODO: implement "smooth" ucb
 def sample_action(
     Q: np.ndarray, 
@@ -95,19 +127,7 @@ def _get_last_action(round_state):
     return round_actions[-1]
     
 
-
-# so lets go through basic q-learning
-
-# start game (initial hands dealt)
-# compute EMS (using private cards)
-# sample action from value function (can use smooth thing)
-# add actions to current history
-# when terminal state reached, update value function:
-# for each action in history, update the mean value using the reward
-
-
-
-class MCTSPlayer(BasePokerPlayer):
+class QLearningPlayer(BasePokerPlayer):
     # based on https://cdn.aaai.org/ocs/ws/ws1227/8811-38072-1-PB.pdf
     # NOTE: currently the agent is unaware of rounds
     
@@ -124,11 +144,6 @@ class MCTSPlayer(BasePokerPlayer):
         
         # logging 
         self.round_results = []
-
-        # computing reward
-        self.use_stack_diff = use_stack_diff
-        self.cur_stack = 0
-        
     
     def load_Q(self, Q: np.ndarray | None = None, Q_path: str | None = None):
         if Q is not None:
@@ -146,7 +161,7 @@ class MCTSPlayer(BasePokerPlayer):
        # get last action
        oppo_last_act_idx = self._get_action_bin(_get_last_action(round_state))
        # compute exploration value from max payoff 
-       c = get_exploration_value(round_state, self.uuid, n_rounds=4, n_raises=3, k=self.k) if self.use_stack_diff else np.sqrt(2)
+       c = get_exploration_value(round_state, self.uuid, n_rounds=4, n_raises=3, k=self.k)
        # sample action
        action_idx = sample_action(self.Q, self.N, oppo_last_act_idx, ehs_bin, valid_actions, c=c)
        # update history
@@ -155,7 +170,6 @@ class MCTSPlayer(BasePokerPlayer):
        return REAL_ACTIONS[action_idx]
     
 
-    # TODO: update c too
     def receive_game_start_message(self, game_info):
         pass
 
@@ -172,10 +186,10 @@ class MCTSPlayer(BasePokerPlayer):
 
     def receive_round_result_message(self, winners, hand_info, round_state):
         # compute reward 
-        reward = self._compute_reward(winners, hand_info, round_state, self.use_stack_diff)
+        reward = compute_reward(winners, hand_info, round_state, self.uuid)
         # update Q function, N function
         for (oppo_last_act_idx, ehs_bin, action_idx) in self.history:
-            self._update(oppo_last_act_idx, ehs_bin, action_idx, reward)
+            update(self.Q, self.N, oppo_last_act_idx, ehs_bin, action_idx, reward)
         # restart history
         self.history = []
         # log result
@@ -200,27 +214,8 @@ class MCTSPlayer(BasePokerPlayer):
             "stack": stack,
         }
         self.round_results.append(result)
-    
-    def _update(self, oppo_last_act_idx, ehs_bin, action_idx, reward):
-        self.N[oppo_last_act_idx, ehs_bin, action_idx] += 1
-        N_s = self.N[oppo_last_act_idx, ehs_bin, action_idx]
-        Q_s = self.Q[oppo_last_act_idx, ehs_bin, action_idx]
-        update = (reward - Q_s) / N_s
-        self.Q[oppo_last_act_idx, ehs_bin, action_idx] += update
 
-    def _compute_reward(self, winners, hand_info, round_state, use_stack_diff: bool=True):
-        # win loss reward
-        # TODO: implement pot weighed reward, expected value of winnings, etc.
-        won = any([winner["uuid"] == self.uuid for winner in winners])
-        if use_stack_diff:
-            new_stack = self._my_stack(round_state['seats'])
-            if won: 
-                new_stack += round_state["pot"]["main"]["amount"]
-            reward = new_stack - self.cur_stack
-        else: 
-            reward = 1.0 / len(winners) if won else 0.0
-        return reward
-    
+
     def _my_stack(self, seats):
         my_seat = [s for s in seats if s["uuid"] == self.uuid][0]
         return my_seat["stack"]
@@ -235,5 +230,5 @@ class MCTSPlayer(BasePokerPlayer):
         return REAL_ACTIONS.index(action)
 
 if __name__ == "__main__":
-    player = MCTSPlayer(n_ehs_bins=10, is_training=True)
+    player = QLearningPlayer(n_ehs_bins=10, is_training=True)
     player.load_Q(Q_path="q_values.npy")

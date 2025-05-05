@@ -7,7 +7,7 @@ import random
 
 from pypokerengine.api.game import setup_config, start_poker
 from randomplayer import RandomPlayer
-from our_player import MCTSPlayer
+from q_learn_player import QLearningPlayer
 
 # setup config
 CONFIG = {
@@ -26,7 +26,7 @@ random.seed(CONFIG["seed"])
 
 # run game
 config = setup_config(max_round=CONFIG["max_round"], initial_stack=CONFIG["initial_stack"], small_blind_amount=CONFIG["small_blind_amount"])
-my_player = MCTSPlayer(n_ehs_bins=CONFIG["n_ehs_bins"], is_training=True, use_stack_diff=CONFIG["use_stack_diff"], k=CONFIG["k"])
+my_player = QLearningPlayer(n_ehs_bins=CONFIG["n_ehs_bins"], is_training=True, use_stack_diff=CONFIG["use_stack_diff"], k=CONFIG["k"])
 config.register_player(name="random_player", algorithm=RandomPlayer())
 config.register_player(name="mcts_player", algorithm=my_player)
 game_result = start_poker(config, verbose=1)
