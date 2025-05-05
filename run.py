@@ -17,7 +17,7 @@ CONFIG = {
     "n_ehs_bins": 5,
     "use_stack_diff": True,
     "seed": 42,
-    "k": 0.1,
+    "k": 1.0,
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 os.makedirs(exp_dir, exist_ok=True)
