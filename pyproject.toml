@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "ai-poker-agent"
+version = "0.1.0"
+description = ""
+authors = ["Oliver Daniels-Koch <danielskoch.oliver@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pypokerengine = "^1.0.1"
+ipdb = "^0.13.13"
+numpy = "^2.2.5"
+deuces = "^0.2.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
