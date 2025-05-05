@@ -12,9 +12,9 @@ from our_player import MCTSPlayer
 # setup config
 CONFIG = {
     "initial_stack": 10000,
-    "max_round": 10,
+    "max_round": 1000,
     "small_blind_amount": 10,
-    "n_ehs_bins": 10,
+    "n_ehs_bins": 5,
     "seed": 42,
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
