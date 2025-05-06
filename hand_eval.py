@@ -24,7 +24,7 @@ def evaluate_hand(private_cards: list[str], community_cards: list[str], n_sample
         board = community_cards + sampled_cards[opponent_needed:]
         our_hand_rank = EVALUATOR.evaluate(private_cards, board)
         opponent_hand_rank = EVALUATOR.evaluate(opponent_cards, board)
-        if our_hand_rank > opponent_hand_rank:
+        if our_hand_rank < opponent_hand_rank:
             wins += 1
         elif our_hand_rank == opponent_hand_rank:
             ties += 1
