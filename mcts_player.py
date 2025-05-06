@@ -17,8 +17,12 @@ from q_learn_player import (
     compute_reward,
     select_action,
     get_a_set, 
-    get_round_log
+    get_round_log,
+    _get_stack
 )
+
+USE_STACK_DIFF = True
+K = 0.5
 
 def _get_uuid(s):
     state, events = s
@@ -42,15 +46,20 @@ def _get_valid_actions(s): #TODO:
     valid_actions = ActionChecker.legal_actions(players, player_pos, state["small_blind_amount"],state["street"])
     return valid_actions
 
+def _get_init_stacks(s):
+    state, events = s
+    return [p.stack for p in state["table"].seats.players]
 
-def compute_sim_rewards(s, use_stack_diff: bool):
+
+def compute_sim_rewards(s, init_stacks):
     state, events = s
     uuids = [p.uuid for p in state["table"].seats.players]
     # get winners from events
     round_finish_event = next(e for e in events if e["type"] == Event.ROUND_FINISH)
     winners = round_finish_event["winners"]
     round_state = round_finish_event["round_state"]
-    rewards = [compute_reward(winners, round_state, uuid, use_stack_diff) for uuid in uuids] # TODO: make more efficient
+    rewards = [compute_reward(winners, round_state, uuid, init_stack, USE_STACK_DIFF) 
+               for uuid, init_stack in zip(uuids, init_stacks)] # TODO: make more efficient
     return rewards
 
 
@@ -61,10 +70,10 @@ def get_obs_sim(s, n_bins):
     obs = get_obs(hole_cards, round_state, uuid, n_bins)
     return obs
 
-def get_sim_explore_weight(s, use_stack_diff: bool):
+def get_sim_explore_weight(s):
     uuid = _get_uuid(s)
     round_state = DataEncoder.encode_round_state(s[0])
-    return get_explore_weight(round_state, uuid, use_stack_diff)
+    return get_explore_weight(round_state, uuid, USE_STACK_DIFF, k=K)
 
 def get_player(s):
     return s[0]['next_player']
@@ -75,20 +84,20 @@ def is_terminal(s):
     return any(event["type"] == Event.ROUND_FINISH for event in events)
 
 
-def search(emulator, s, Q, N, n_rollouts: int, n_bins, use_stack_diff: bool):
+def search(emulator, s, Q, N, n_rollouts: int, n_bins, init_stacks):
     for i in range(n_rollouts):
         out_of_tree = [False for _ in range(_get_n_players(s))]
-        simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff)
+        simulate(emulator, s, Q, N, out_of_tree, n_bins, init_stacks)
 
 
-def simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
+def simulate(emulator, s, Q, N, out_of_tree, n_bins, init_stacks):
     if is_terminal(s):
         # get winners from events?
-        return compute_sim_rewards(s, use_stack_diff)
+        return compute_sim_rewards(s, init_stacks)
     # check if out of tree
     p_i = get_player(s)
     if out_of_tree[p_i]:
-        return rollout(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff)
+        return rollout(emulator, s, Q, N, out_of_tree, n_bins, init_stacks)
     # get information state
     obs = get_obs_sim(s, n_bins)
     # sample action
@@ -97,42 +106,36 @@ def simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
         a = np.random.choice(a_set)
         out_of_tree[p_i] = True
     else: 
-        c = get_sim_explore_weight(s, use_stack_diff)
+        c = get_sim_explore_weight(s)
         a = select_action(Q, N, obs, a_set, c)
     # get next state
     s_next = emulator.apply_action(s[0], REAL_ACTIONS[a])
     # sample until terminal
-    rs = simulate(emulator, s_next, Q, N, out_of_tree, n_bins, use_stack_diff)
+    rs = simulate(emulator, s_next, Q, N, out_of_tree, n_bins, init_stacks)
     # backpropagate
     update(Q, N, obs + (a,), rs[p_i])
     return rs
 
 
-def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
+def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, init_stacks):
     a_set = get_a_set(_get_valid_actions(s))
     a = np.random.choice(a_set)
     s_next = emulator.apply_action(s[0], REAL_ACTIONS[a])
-    return simulate(emulator, s_next, Q, N, out_of_tree, n_bins, use_stack_diff)
+    return simulate(emulator, s_next, Q, N, out_of_tree, n_bins, init_stacks)
 
 
-# TODO: add action history 
-# TODO: add "small blind based" rewards
-# TODO: figure out how to eval against actual opponents
-# # nah I'll just evaluate against older epochs, seems reasonable enough
-
+# TODO: evaluate early players against later players
 
 class MCTSPlayer(BasePokerPlayer):
     # based on https://cdn.aaai.org/ocs/ws/ws1227/8811-38072-1-PB.pdf
 
     def __init__(
-            self, 
-            n_ehs_bins: int, 
-            is_training: bool, 
-            k: float=0.5, 
-            use_stack_diff: bool=True, 
-            n_rollouts_train: int=100,
-            n_rollouts_eval: int=100
-        ): 
+        self, 
+        n_ehs_bins: int, 
+        is_training: bool, 
+        n_rollouts_train: int=100,
+        n_rollouts_eval: int=100
+    ): 
         self.n_ehs_bins = n_ehs_bins
         # Q[position, round, last_action, hand_strength_bin, action_idx]
         # Q[-1, :, :] is reserved for when you go first
@@ -140,10 +143,8 @@ class MCTSPlayer(BasePokerPlayer):
         self.is_training = is_training
         self.Q = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.N = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
-        self.k = k
         self.n_rollouts_train = n_rollouts_train
         self.n_rollouts_eval = n_rollouts_eval
-        self.use_stack_diff = use_stack_diff
         self.history = []
         self.emulator = None
         # logging 
@@ -173,7 +174,8 @@ class MCTSPlayer(BasePokerPlayer):
         initial_state = self.emulator.generate_initial_game_state(players_info)
         for i in tqdm(range(n_games), desc="Training games"):
             s = self.emulator.start_new_round(initial_state)
-            search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, self.use_stack_diff)
+            init_stacks = _get_init_stacks(s)
+            search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, init_stacks)
             if i % log_interval == 0:
                 # print mean q values over first 2 axes (so you get q values for each action)
                 mean_q_values = np.mean(self.Q, axis=tuple(range(self.Q.ndim-1)))
@@ -202,8 +204,10 @@ class MCTSPlayer(BasePokerPlayer):
         game_state = restore_game_state(round_state)
         for player in game_state["table"].seats.players:
            game_state = attach_hole_card_from_deck(game_state, player.uuid)
+        s = (game_state, [])
+        init_stacks = _get_init_stacks(s)
         # simulate for alloted budget 
-        search(self.emulator, (game_state, []), self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, self.use_stack_diff)
+        search(self.emulator, s, self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, init_stacks)
         # argmax best action
         obs = get_obs(hole_card, round_state, self.uuid, self.n_ehs_bins)
         a = np.argmax(self.Q[obs])
@@ -213,7 +217,7 @@ class MCTSPlayer(BasePokerPlayer):
         pass
 
     def receive_round_start_message(self, round_count, hole_card, seats):
-        pass
+        self.init_stack = _get_stack(seats, self.uuid)
 
     def receive_street_start_message(self, street, round_state):
         pass
@@ -222,7 +226,7 @@ class MCTSPlayer(BasePokerPlayer):
         pass
 
     def receive_round_result_message(self, winners, hand_info, round_state):
-        reward = compute_reward(winners, round_state, self.uuid, self.use_stack_diff)
+        reward = compute_reward(winners, round_state, self.uuid, self.init_stack, USE_STACK_DIFF)
         
         # update Q function, N function
         self._log_result(winners, hand_info, round_state, reward)

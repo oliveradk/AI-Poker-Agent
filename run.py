@@ -15,9 +15,9 @@ CONFIG = {
     "max_round": 1000,
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
-    "use_stack_diff": False,
+    "use_stack_diff": True,
     "seed": 46,
-    "k": None,
+    "k": 0.5,
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 os.makedirs(exp_dir, exist_ok=True)

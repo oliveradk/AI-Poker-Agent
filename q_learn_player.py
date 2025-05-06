@@ -12,6 +12,9 @@ STREET_IDX = {
 N_ACTIONS = len(REAL_ACTIONS)
 N_STREETS = 4
 N_RAISES = 3
+SMALL_BET = 2 
+BIG_BET = 4
+MAX_GAIN = 2 * (N_RAISES + 1) * SMALL_BET + 2 * (N_RAISES+1) * BIG_BET
 
 
 def _get_action_bin(action: dict | None):
@@ -24,6 +27,10 @@ def _get_action_bin(action: dict | None):
 
 def _get_dealer_pos(round_state):
     return round_state["dealer_btn"]
+
+def _get_stack(seats, uuid):
+    seat = next((s for s in seats if s["uuid"] == uuid))
+    return seat["stack"]
 
 
 def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
@@ -46,23 +53,12 @@ def get_obs(hole_card, round_state, uuid, n_bins):
     oppo_last_act_idx = _get_action_bin(_get_last_action(round_state))
     return position, street, oppo_last_act_idx, ehs_bin
 
-# NOTE: this is technically variable for different actions...
-def get_explore_weight(round_state, uuid, use_stack_diff, n_rounds: int=4, n_raises: int=3, k=0.5):
+# TODO: add the round-weighting thing
+def get_explore_weight(round_state, uuid, use_stack_diff, k=0.5):
     if not use_stack_diff:
         return np.sqrt(2.0)
-    pot_size = round_state["pot"]["main"]["amount"] # ignore side pots
-    # remaining value this round
-    n_bets = n_raises + 1
-    oppo_bets = 0
-    for action in round_state["action_histories"][round_state["street"]]:
-        if action["uuid"] != uuid:
-            oppo_bets += 1
-    round_value = (n_bets - oppo_bets) * round_state["small_blind_amount"]
-    # remaining value in future rounds
-    max_rounds = n_rounds - round_state["round_count"]
-    max_raise = n_bets * round_state["small_blind_amount"]
-    future_round_value = max_rounds * max_raise
-    return pot_size + k * (round_value + future_round_value)
+    # for now just do maximum gain 
+    return MAX_GAIN * k
 
 def update(Q, N, obs_a, reward):
     N[obs_a] += 1
@@ -72,7 +68,7 @@ def update(Q, N, obs_a, reward):
     Q[obs_a] += update
     
 
-def compute_reward(winners, round_state, uuid, use_stack_diff):
+def compute_reward(winners, round_state, uuid, init_stack, use_stack_diff):
     if len(winners) == 1 and winners[0]["uuid"] == uuid:
         frac_pot = 1.0
     elif len(winners) == 2:
@@ -81,19 +77,11 @@ def compute_reward(winners, round_state, uuid, use_stack_diff):
         frac_pot = 0.0
     if not use_stack_diff: 
         return frac_pot
-    # get player bets throughout round 
-    player_bets = 0
-    for street_bets in round_state["action_histories"].values():
-        for bet in street_bets:
-            if bet["uuid"] == uuid:
-                if "amount" not in bet:
-                    print(bet)
-                player_bets += bet.get("paid", bet.get("amount", 0))
-    # get pot size
-    pot_size = round_state["pot"]["main"]["amount"]
-    for side_pot in round_state["pot"]["side"]:
-        pot_size += side_pot["amount"]
-    return pot_size * frac_pot - player_bets
+    pot = round_state["pot"]["main"]["amount"]
+    cur_stack = _get_stack(round_state["seats"], uuid)
+    chip_diff = cur_stack - init_stack + pot * frac_pot
+    sb_diff = chip_diff / round_state["small_blind_amount"]
+    return sb_diff
 
 def get_a_set(valid_actions):
     valid_acts = [action["action"] for action in valid_actions]
@@ -185,7 +173,7 @@ class QLearningPlayer(BasePokerPlayer):
        # get state
        obs = get_obs(hole_card, round_state, self.uuid, self.n_ehs_bins)
        # compute exploration value from max payoff 
-       c = get_explore_weight(round_state, self.uuid, self.use_stack_diff, n_rounds=4, n_raises=3, k=self.k)
+       c = get_explore_weight(round_state, self.uuid, self.use_stack_diff, k=self.k)
        # sample action
        action_idx = sample_action(self.Q, self.N, obs, valid_actions, c=c)
        # update history
@@ -198,7 +186,7 @@ class QLearningPlayer(BasePokerPlayer):
         pass
 
     def receive_round_start_message(self, round_count, hole_card, seats):
-        pass
+        self.init_stack = _get_stack(seats, self.uuid)
 
     def receive_street_start_message(self, street, round_state):
         pass
@@ -208,7 +196,7 @@ class QLearningPlayer(BasePokerPlayer):
 
     def receive_round_result_message(self, winners, hand_info, round_state):
         # compute reward 
-        reward = compute_reward(winners, round_state, self.uuid, self.use_stack_diff)
+        reward = compute_reward(winners, round_state, self.uuid, self.init_stack, self.use_stack_diff)
         # update Q function, N function
         for obs_a in self.history:
             update(self.Q, self.N, obs_a, reward)
@@ -221,11 +209,6 @@ class QLearningPlayer(BasePokerPlayer):
     def _log_result(self, winners, hand_info, round_state, reward):
         round_log = get_round_log(round_state, reward, self.uuid)
         self.round_results.append(round_log)
-
-
-    def _my_stack(self, seats):
-        my_seat = [s for s in seats if s["uuid"] == self.uuid][0]
-        return my_seat["stack"]
 
     
     def _get_action_bin(self, action: dict | None):

@@ -14,14 +14,12 @@ CONFIG = {
     "max_round": 500,
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
-    "use_stack_diff": False,
     "n_rollouts_train": 5, 
     "n_rollouts_eval": 0,
     "n_games_per_epoch": 100, 
     "n_epochs": 1,
     "n_eval_rounds": 500,
     "seed": 46,
-    "k": None,
     "log_interval": 10, 
     "load_dir": None
 }
@@ -33,8 +31,6 @@ random.seed(CONFIG["seed"])
 mtcs_player = MCTSPlayer(
     n_ehs_bins=CONFIG["n_ehs_bins"], 
     is_training=True, 
-    use_stack_diff=CONFIG["use_stack_diff"], 
-    k=CONFIG["k"],
     n_rollouts_train=CONFIG["n_rollouts_train"],
     n_rollouts_eval=CONFIG["n_rollouts_eval"]
 )
