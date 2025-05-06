@@ -15,7 +15,11 @@ CONFIG = {
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
     "use_stack_diff": False,
-    "n_rollouts": 50,
+    "n_rollouts_train": 10, 
+    "n_rollouts_eval": 1,
+    "n_games_per_epoch": 2, 
+    "n_epochs": 2,
+    "n_eval_rounds": 10,
     "seed": 46,
     "k": None,
 }
@@ -29,7 +33,8 @@ mtcs_player = MCTSPlayer(
     is_training=True, 
     use_stack_diff=CONFIG["use_stack_diff"], 
     k=CONFIG["k"],
-    n_rollouts=CONFIG["n_rollouts"]
+    n_rollouts_train=CONFIG["n_rollouts_train"],
+    n_rollouts_eval=CONFIG["n_rollouts_eval"]
 )
 
 mtcs_player.set_emulator(
@@ -51,5 +56,37 @@ players_info = {
     }
 }
 
-mtcs_player.train(n_games=1, players_info=players_info, save_dir=exp_dir)
+
+def eval_random_player(player: MCTSPlayer, n_eval_rounds: int):
+    config = setup_config(max_round=n_eval_rounds, initial_stack=CONFIG["initial_stack"], small_blind_amount=CONFIG["small_blind_amount"])
+    config.register_player(name="random_player", algorithm=RandomPlayer())
+    config.register_player(name="my_player", algorithm=player)
+    game_result = start_poker(config, verbose=1)
+    round_results = player.round_results
+    player.round_results = []
+    return round_results
+
+
+# train eval loop
+epochs = CONFIG["n_epochs"]
+games_per_epoch = CONFIG["n_games_per_epoch"]
+
+mean_eval_reward = []
+for epoch in range(epochs):
+    mtcs_player.train(n_games=games_per_epoch, players_info=players_info, save_dir=exp_dir)
+    print(f"done training epoch {epoch}")
+
+    # evaluate against random player 
+    round_results = eval_random_player(mtcs_player, n_eval_rounds=CONFIG["n_eval_rounds"])
+    mean_eval_reward.append(np.mean([r["reward"] for r in round_results]))
+    with open(os.path.join(exp_dir, f"round_results_{epoch}.json"), "w") as f:
+        json.dump(round_results, f)
+
+
+import matplotlib.pyplot as plt
+
+plt.plot(mean_eval_reward, label="mean eval reward")
+plt.legend()
+plt.savefig(os.path.join(exp_dir, "mean_eval_reward.png"))
+
 print("done training")

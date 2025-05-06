@@ -115,6 +115,26 @@ def _get_last_action(round_state):
     if len(round_actions) == 0:
         return None
     return round_actions[-1]
+
+def get_round_log(round_state, reward, uuid):
+    # Calculate pot size
+    pot_size = round_state["pot"]["main"]["amount"]
+    for side_pot in round_state["pot"]["side"]:
+        pot_size += side_pot["amount"]
+    seat = [s for s in round_state["seats"] if s["uuid"] == uuid][0]
+    stack = seat["stack"]
+    
+    # Log result
+    result = {
+        "round": round_state["round_count"],
+        "reward": reward,
+        "pot_size": pot_size,
+        "street": round_state["street"],
+        "community_cards": round_state["community_card"],
+        "stack": stack,
+    }
+    return result
+
     
 
 class QLearningPlayer(BasePokerPlayer):
@@ -163,8 +183,6 @@ class QLearningPlayer(BasePokerPlayer):
         pass
 
     def receive_round_start_message(self, round_count, hole_card, seats):
-        # update current stack
-        self.cur_stack = self._my_stack(seats)
         pass
 
     def receive_street_start_message(self, street, round_state):
@@ -186,23 +204,8 @@ class QLearningPlayer(BasePokerPlayer):
 
     
     def _log_result(self, winners, hand_info, round_state, reward):
-        # Calculate pot size
-        pot_size = round_state["pot"]["main"]["amount"]
-        for side_pot in round_state["pot"]["side"]:
-            pot_size += side_pot["amount"]
-        seat = [s for s in round_state["seats"] if s["uuid"] == self.uuid][0]
-        stack = seat["stack"]
-        
-        # Log result
-        result = {
-            "round": round_state["round_count"],
-            "reward": reward,
-            "pot_size": pot_size,
-            "street": round_state["street"],
-            "community_cards": round_state["community_card"],
-            "stack": stack,
-        }
-        self.round_results.append(result)
+        round_log = get_round_log(round_state, reward, self.uuid)
+        self.round_results.append(round_log)
 
 
     def _my_stack(self, seats):

@@ -1,33 +1,48 @@
 from pypokerengine.players import BasePokerPlayer 
 from pypokerengine.api.emulator import Emulator, Event
+from pypokerengine.engine.data_encoder import DataEncoder
+from pypokerengine.engine.action_checker import ActionChecker
 from pypokerengine.utils.game_state_utils import restore_game_state, attach_hole_card_from_deck, attach_hole_card
 import numpy as np
-from randomplayer import RandomPlayer
 import os
 
 from q_learn_player import (
-    REAL_ACTIONS, N_ACTIONS, get_obs, get_explore_weight, update, compute_reward, select_action, get_a_set
+    REAL_ACTIONS,
+    N_ACTIONS,
+    get_obs,
+    get_explore_weight,
+    update,
+    compute_reward,
+    select_action,
+    get_a_set, 
+    get_round_log
 )
 
 def _get_uuid(s):
-    game_state, events = s
-    return game_state['table'].seats.players[game_state['next_player']].uuid
+    state, events = s
+    return state['table'].seats.players[state['next_player']].uuid
 
 def _get_n_players(s):
-    game_state, events = s
-    return len(game_state['table'].seats.players)
+    state, events = s
+    return len(state['table'].seats.players)
 
 def _get_hole_cards(s):
-    gs, e = s
-    return [str(card) for card in gs['table'].seats.players[gs['next_player']].hole_card]
+    state, events = s
+    return [str(card) for card in state['table'].seats.players[state['next_player']].hole_card]
 
-def _get_valid_actions(s):
-    valid_actions = next(e for e in s[1] if "valid_actions" in e)["valid_actions"]
+def _get_valid_actions(s): #TODO:
+    state, events = s
+    if len(events) > 0:
+        return next(e for e in events if "valid_actions" in e)["valid_actions"]
+    # encode using game state
+    players = state["table"].seats.players
+    player_pos = state["next_player"]
+    valid_actions = ActionChecker.legal_actions(players, player_pos, state["small_blind_amount"],state["street"])
     return valid_actions
 
 
 def compute_sim_reward(s, use_stack_diff: bool):
-    game_state, events = s
+    state, events = s
     uuid = _get_uuid(s)
     # get winners from events
     round_finish_event = next(e for e in events if e["type"] == Event.ROUND_FINISH)
@@ -38,13 +53,13 @@ def compute_sim_reward(s, use_stack_diff: bool):
 
 def get_obs_sim(s, n_bins):
     hole_cards = _get_hole_cards(s)
-    round_state = next(e for e in s[1] if "round_state" in e)["round_state"]
+    round_state = DataEncoder.encode_round_state(s[0])
     obs = get_obs(hole_cards, round_state, n_bins)
     return obs
 
 def get_sim_explore_weight(s, use_stack_diff: bool):
     uuid = _get_uuid(s)
-    round_state = next(e for e in s[1] if "round_state" in e)["round_state"]
+    round_state = DataEncoder.encode_round_state(s[0])
     return get_explore_weight(round_state, uuid, use_stack_diff)
 
 def get_player(s):
@@ -52,7 +67,7 @@ def get_player(s):
 
 
 def is_terminal(s):
-    _gs, events = s
+    state, events = s
     return any(event["type"] == Event.ROUND_FINISH for event in events)
 
 
@@ -98,7 +113,15 @@ def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bo
 
 class MCTSPlayer(BasePokerPlayer):
 
-    def __init__(self, n_ehs_bins: int, is_training: bool, k: float=0.5, use_stack_diff: bool=True, n_rollouts: int=100): 
+    def __init__(
+            self, 
+            n_ehs_bins: int, 
+            is_training: bool, 
+            k: float=0.5, 
+            use_stack_diff: bool=True, 
+            n_rollouts_train: int=100,
+            n_rollouts_eval: int=100
+        ): 
         self.n_ehs_bins = n_ehs_bins
         # Q[opponent_last_action, hand_strength_bin, action_idx]
         # Q[-1, :, :] is reserved for when you go first
@@ -107,7 +130,8 @@ class MCTSPlayer(BasePokerPlayer):
         self.Q = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.N = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.k = k
-        self.n_rollouts = n_rollouts
+        self.n_rollouts_train = n_rollouts_train
+        self.n_rollouts_eval = n_rollouts_eval
         self.use_stack_diff = use_stack_diff
         self.history = []
         self.emulator = None
@@ -129,6 +153,18 @@ class MCTSPlayer(BasePokerPlayer):
         self.emulator.set_blind_structure(blind_structure)
         # for info in players_info: # don't think i actually need this, since I never call run until finish
         #     self.emulator.register_player(info["uuid"], RandomPlayer())
+    
+    # TODO: what are we doing
+    def train(self, n_games, players_info, save_dir: str):
+        if self.emulator is None:
+            raise ValueError("Emulator not set")
+
+        initial_state = self.emulator.generate_initial_game_state(players_info)
+        for i in range(n_games):
+            s = self.emulator.start_new_round(initial_state)
+            search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, self.use_stack_diff)
+        
+        self.save(save_dir)
 
     # Setup Emulator object by registering game information
     def receive_game_start_message(self, game_info):
@@ -141,14 +177,40 @@ class MCTSPlayer(BasePokerPlayer):
         self.players_info = players_info
         self.set_emulator(player_num, max_round, small_blind_amount, ante_amount, blind_structure, players_info)
     
-    # TODO: what are we doing
-    def train(self, n_games, players_info, save_dir: str):
-        if self.emulator is None:
-            raise ValueError("Emulator not set")
 
-        initial_state = self.emulator.generate_initial_game_state(players_info)
-        for i in range(n_games):
-            s = self.emulator.start_new_round(initial_state)
-            search(self.emulator, s, self.Q, self.N, self.n_rollouts, self.n_ehs_bins, self.use_stack_diff)
+    def declare_action(self, valid_actions, hole_card, round_state):
+        if len(valid_actions) == 1: # not a real action if no choice
+           return valid_actions[0]["action"]
+        # get game state from round state 
+        game_state = restore_game_state(round_state)
+        for player in game_state["table"].seats.players:
+           game_state = attach_hole_card_from_deck(game_state, player.uuid)
+        # simulate for alloted budget 
+        search(self.emulator, (game_state, []), self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, self.use_stack_diff)
+        # argmax best action
+        obs = get_obs(hole_card, round_state, self.n_ehs_bins)
+        a = np.argmax(self.Q[obs[0], obs[1], :])
+        return REAL_ACTIONS[a]
+
+    def receive_game_start_message(self, game_info):
+        pass
+
+    def receive_round_start_message(self, round_count, hole_card, seats):
+        pass
+
+    def receive_street_start_message(self, street, round_state):
+        pass
+
+    def receive_game_update_message(self, action, round_state):
+        pass
+
+    def receive_round_result_message(self, winners, hand_info, round_state):
+        reward = compute_reward(winners, round_state, self.uuid, self.use_stack_diff)
         
-        self.save(save_dir)
+        # update Q function, N function
+        self._log_result(winners, hand_info, round_state, reward)
+    
+    def _log_result(self, winners, hand_info, round_state, reward):
+        round_log = get_round_log(round_state, reward, self.uuid)
+        self.round_results.append(round_log)
+    
