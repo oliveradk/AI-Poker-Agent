@@ -14,6 +14,7 @@ deuces = "^0.2.1"
 matplotlib = "^3.10.1"
 ipykernel = "^6.29.5"
 tqdm = "^4.67.1"
+py-spy = "^0.4.0"
 
 
 [build-system]
