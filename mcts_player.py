@@ -5,6 +5,7 @@ from pypokerengine.engine.action_checker import ActionChecker
 from pypokerengine.utils.game_state_utils import restore_game_state, attach_hole_card_from_deck, attach_hole_card
 import numpy as np
 import os
+from tqdm import tqdm
 
 from q_learn_player import (
     REAL_ACTIONS,
@@ -41,14 +42,15 @@ def _get_valid_actions(s): #TODO:
     return valid_actions
 
 
-def compute_sim_reward(s, use_stack_diff: bool):
+def compute_sim_rewards(s, use_stack_diff: bool):
     state, events = s
-    uuid = _get_uuid(s)
+    uuids = [p.uuid for p in state["table"].seats.players]
     # get winners from events
     round_finish_event = next(e for e in events if e["type"] == Event.ROUND_FINISH)
     winners = round_finish_event["winners"]
     round_state = round_finish_event["round_state"]
-    return compute_reward(winners, round_state, uuid, use_stack_diff)
+    rewards = [compute_reward(winners, round_state, uuid, use_stack_diff) for uuid in uuids] # TODO: make more efficient
+    return rewards
 
 
 def get_obs_sim(s, n_bins):
@@ -72,7 +74,7 @@ def is_terminal(s):
 
 
 def search(emulator, s, Q, N, n_rollouts: int, n_bins, use_stack_diff: bool):
-    for _ in range(n_rollouts):
+    for i in range(n_rollouts):
         out_of_tree = [False for _ in range(_get_n_players(s))]
         simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff)
 
@@ -80,7 +82,7 @@ def search(emulator, s, Q, N, n_rollouts: int, n_bins, use_stack_diff: bool):
 def simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
     if is_terminal(s):
         # get winners from events?
-        return compute_sim_reward(s, use_stack_diff)
+        return compute_sim_rewards(s, use_stack_diff)
     # check if out of tree
     p_i = get_player(s)
     if out_of_tree[p_i]:
@@ -96,22 +98,23 @@ def simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
         c = get_sim_explore_weight(s, use_stack_diff)
         a = select_action(Q, N, obs, a_set, c)
     # get next state
-    s = emulator.apply_action(s[0], REAL_ACTIONS[a])
+    s_next = emulator.apply_action(s[0], REAL_ACTIONS[a])
     # sample until terminal
-    r = simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff)
+    rs = simulate(emulator, s_next, Q, N, out_of_tree, n_bins, use_stack_diff)
     # backpropagate
-    update(Q, N, obs[0], obs[1], a, r)
-    return r
+    update(Q, N, obs[0], obs[1], a, rs[p_i])
+    return rs
 
 
 def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
     a_set = get_a_set(_get_valid_actions(s))
     a = np.random.choice(a_set)
-    s = emulator.apply_action(s[0], REAL_ACTIONS[a])
-    return simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff)
+    s_next = emulator.apply_action(s[0], REAL_ACTIONS[a])
+    return simulate(emulator, s_next, Q, N, out_of_tree, n_bins, use_stack_diff)
 
 
 class MCTSPlayer(BasePokerPlayer):
+    # based on https://cdn.aaai.org/ocs/ws/ws1227/8811-38072-1-PB.pdf
 
     def __init__(
             self, 
@@ -155,15 +158,21 @@ class MCTSPlayer(BasePokerPlayer):
         #     self.emulator.register_player(info["uuid"], RandomPlayer())
     
     # TODO: what are we doing
-    def train(self, n_games, players_info, save_dir: str):
+    def train(self, n_games, players_info, save_dir: str, log_interval: int=100):
         if self.emulator is None:
             raise ValueError("Emulator not set")
 
         initial_state = self.emulator.generate_initial_game_state(players_info)
-        for i in range(n_games):
+        for i in tqdm(range(n_games), desc="Training games"):
             s = self.emulator.start_new_round(initial_state)
             search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, self.use_stack_diff)
-        
+            if i % log_interval == 0:
+                # print mean q values over first 2 axes (so you get q values for each action)
+                mean_q_values = np.mean(self.Q, axis=(0, 1))
+                mean_n_values = np.mean(self.N, axis=(0, 1))
+                assert len(mean_q_values) == len(mean_n_values) == N_ACTIONS
+                print(f"Mean Q values: {[f'{REAL_ACTIONS[i]}: {mean_q_values[i]:.2f}' for i in range(N_ACTIONS)]}")
+                print(f"Mean N values: {[f'{REAL_ACTIONS[i]}: {mean_n_values[i]:.2f}' for i in range(N_ACTIONS)]}")
         self.save(save_dir)
 
     # Setup Emulator object by registering game information
