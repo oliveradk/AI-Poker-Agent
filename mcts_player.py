@@ -84,6 +84,7 @@ def is_terminal(s):
     return any(event["type"] == Event.ROUND_FINISH for event in events)
 
 
+# TODO: add depth-limit for inference
 def search(emulator, s, Q, N, n_rollouts: int, n_bins, init_stacks):
     for i in range(n_rollouts):
         out_of_tree = [False for _ in range(_get_n_players(s))]
@@ -201,7 +202,7 @@ class MCTSPlayer(BasePokerPlayer):
         search(self.emulator, s, self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, init_stacks)
         # argmax best valid action
         obs = get_obs(hole_card, round_state, self.uuid, self.n_ehs_bins)
-        a_set = list(range(N_ACTIONS))#get_a_set(_get_valid_actions(s))
+        a_set = get_a_set(_get_valid_actions(s))
         a = select_action(self.Q, self.N, obs, a_set, c=0, use_ucb=False)
         return REAL_ACTIONS[a]
 
