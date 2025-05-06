@@ -33,7 +33,7 @@ def get_obs(hole_card, round_state, n_bins):
     return oppo_last_act_idx, ehs_bin
 
 # NOTE: this is technically variable for different actions...
-def get_exploration_value(round_state, uuid, use_stack_diff, n_rounds: int=4, n_raises: int=3, k=0.5):
+def get_explore_weight(round_state, uuid, use_stack_diff, n_rounds: int=4, n_raises: int=3, k=0.5):
     if not use_stack_diff:
         return np.sqrt(2.0)
     pot_size = round_state["pot"]["main"]["amount"] # ignore side pots
@@ -150,7 +150,7 @@ class QLearningPlayer(BasePokerPlayer):
        # get state
        obs = get_obs(hole_card, round_state, self.n_ehs_bins)
        # compute exploration value from max payoff 
-       c = get_exploration_value(round_state, self.uuid, self.use_stack_diff, n_rounds=4, n_raises=3, k=self.k)
+       c = get_explore_weight(round_state, self.uuid, self.use_stack_diff, n_rounds=4, n_raises=3, k=self.k)
        # sample action
        action_idx = sample_action(self.Q, self.N, obs, valid_actions, c=c)
        # update history
