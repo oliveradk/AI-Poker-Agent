@@ -12,7 +12,7 @@ from q_learn_player import QLearningPlayer
 # setup config
 CONFIG = {
     "initial_stack": 10000,
-    "max_round": 500,
+    "max_round": 1000,
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
     "use_stack_diff": False,

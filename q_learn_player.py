@@ -3,7 +3,15 @@ import numpy as np
 from hand_eval import evaluate_hand
 
 REAL_ACTIONS = ["fold", "call", "raise"]
+STREET_IDX = {
+    "preflop": 0,
+    "flop": 1,
+    "turn": 2,
+    "river": 3,
+}
 N_ACTIONS = len(REAL_ACTIONS)
+N_STREETS = 4
+N_RAISES = 3
 
 
 def _get_action_bin(action: dict | None):
@@ -13,6 +21,9 @@ def _get_action_bin(action: dict | None):
     if action not in REAL_ACTIONS:
         return -1 
     return REAL_ACTIONS.index(action)
+
+def _get_dealer_pos(round_state):
+    return round_state["dealer_btn"]
 
 
 def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
@@ -27,10 +38,13 @@ def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
         return n_bins - 1
     return ehs_bin
 
-def get_obs(hole_card, round_state, n_bins):
+def get_obs(hole_card, round_state, uuid, n_bins):
+    # position, street, last_action, ehs_bin
+    position = 0 if round_state["seats"][_get_dealer_pos(round_state)]["uuid"] == uuid else 1
+    street = STREET_IDX[round_state["street"]]
     ehs_bin = get_EHS(hole_card, round_state["community_card"], n_bins)
     oppo_last_act_idx = _get_action_bin(_get_last_action(round_state))
-    return oppo_last_act_idx, ehs_bin
+    return position, street, oppo_last_act_idx, ehs_bin
 
 # NOTE: this is technically variable for different actions...
 def get_explore_weight(round_state, uuid, use_stack_diff, n_rounds: int=4, n_raises: int=3, k=0.5):
@@ -50,12 +64,12 @@ def get_explore_weight(round_state, uuid, use_stack_diff, n_rounds: int=4, n_rai
     future_round_value = max_rounds * max_raise
     return pot_size + k * (round_value + future_round_value)
 
-def update(Q, N, oppo_last_act_idx, ehs_bin, action_idx, reward):
-    N[oppo_last_act_idx, ehs_bin, action_idx] += 1
-    N_s = N[oppo_last_act_idx, ehs_bin, action_idx]
-    Q_s = Q[oppo_last_act_idx, ehs_bin, action_idx]
+def update(Q, N, obs_a, reward):
+    N[obs_a] += 1
+    N_s = N[obs_a]
+    Q_s = Q[obs_a]
     update = (reward - Q_s) / N_s
-    Q[oppo_last_act_idx, ehs_bin, action_idx] += update
+    Q[obs_a] += update
     
 
 def compute_reward(winners, round_state, uuid, use_stack_diff):
@@ -88,10 +102,10 @@ def get_a_set(valid_actions):
 
 def select_action(Q, N, obs, a_set, c):
     ucb = c * np.sqrt(
-        np.log(N[obs[0], obs[1], :].sum()) / (N[obs[0], obs[1], :])
+        np.log(N[obs].sum()) / (N[obs])
     )
     vals = -np.inf * np.ones(N_ACTIONS)
-    Q_ucb = Q[obs[0], obs[1], :] + ucb
+    Q_ucb = Q[obs] + ucb
     vals[a_set] = Q_ucb[a_set]
     return np.argmax(vals)
 
@@ -99,12 +113,13 @@ def select_action(Q, N, obs, a_set, c):
 def sample_action(
     Q: np.ndarray, 
     N: np.ndarray, 
-    obs: tuple[int, int],
+    obs: tuple[int, ...],
     valid_actions: list[dict], 
     c: float=1.4
 ):
     a_set = get_a_set(valid_actions)
-    if N[obs[0], obs[1], :].sum() == 0:
+    print("obs", obs)
+    if N[obs].sum() == 0:
         action_idx = np.random.choice(a_set)
     else:
         action_idx = select_action(Q, N, obs, a_set, c)
@@ -143,12 +158,12 @@ class QLearningPlayer(BasePokerPlayer):
     
     def __init__(self, n_ehs_bins: int, is_training: bool, k: float=0.5, use_stack_diff: bool=False): 
         self.n_ehs_bins = n_ehs_bins
-        # Q[opponent_last_action, hand_strength_bin, action_idx]
+        # Q[position, street, last_action, hand_strength_bin, action_idx]
         # Q[-1, :, :] is reserved for when you go first
         # TODO: add action history
         self.is_training = is_training
-        self.Q = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
-        self.N = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
+        self.Q = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
+        self.N = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.k = k
         self.history = []
         self.use_stack_diff = use_stack_diff
@@ -168,7 +183,7 @@ class QLearningPlayer(BasePokerPlayer):
        if len(valid_actions) == 1: # not a real action if no choice
            return valid_actions[0]["action"]
        # get state
-       obs = get_obs(hole_card, round_state, self.n_ehs_bins)
+       obs = get_obs(hole_card, round_state, self.uuid, self.n_ehs_bins)
        # compute exploration value from max payoff 
        c = get_explore_weight(round_state, self.uuid, self.use_stack_diff, n_rounds=4, n_raises=3, k=self.k)
        # sample action
@@ -195,8 +210,8 @@ class QLearningPlayer(BasePokerPlayer):
         # compute reward 
         reward = compute_reward(winners, round_state, self.uuid, self.use_stack_diff)
         # update Q function, N function
-        for (oppo_last_act_idx, ehs_bin, action_idx) in self.history:
-            update(self.Q, self.N, oppo_last_act_idx, ehs_bin, action_idx, reward)
+        for obs_a in self.history:
+            update(self.Q, self.N, obs_a, reward)
         # restart history
         self.history = []
         # log result

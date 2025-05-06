@@ -10,6 +10,7 @@ from tqdm import tqdm
 from q_learn_player import (
     REAL_ACTIONS,
     N_ACTIONS,
+    N_STREETS,
     get_obs,
     get_explore_weight,
     update,
@@ -56,7 +57,8 @@ def compute_sim_rewards(s, use_stack_diff: bool):
 def get_obs_sim(s, n_bins):
     hole_cards = _get_hole_cards(s)
     round_state = DataEncoder.encode_round_state(s[0])
-    obs = get_obs(hole_cards, round_state, n_bins)
+    uuid = _get_uuid(s)
+    obs = get_obs(hole_cards, round_state, uuid, n_bins)
     return obs
 
 def get_sim_explore_weight(s, use_stack_diff: bool):
@@ -91,7 +93,7 @@ def simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
     obs = get_obs_sim(s, n_bins)
     # sample action
     a_set = get_a_set(_get_valid_actions(s))
-    if Q[obs[0], obs[1], :].sum() == 0:
+    if Q[obs].sum() == 0:
         a = np.random.choice(a_set)
         out_of_tree[p_i] = True
     else: 
@@ -102,7 +104,7 @@ def simulate(emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bool):
     # sample until terminal
     rs = simulate(emulator, s_next, Q, N, out_of_tree, n_bins, use_stack_diff)
     # backpropagate
-    update(Q, N, obs[0], obs[1], a, rs[p_i])
+    update(Q, N, obs + (a,), rs[p_i])
     return rs
 
 
@@ -111,6 +113,12 @@ def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, use_stack_diff: bo
     a = np.random.choice(a_set)
     s_next = emulator.apply_action(s[0], REAL_ACTIONS[a])
     return simulate(emulator, s_next, Q, N, out_of_tree, n_bins, use_stack_diff)
+
+
+# TODO: add action history 
+# TODO: add "small blind based" rewards
+# TODO: figure out how to eval against actual opponents
+# # nah I'll just evaluate against older epochs, seems reasonable enough
 
 
 class MCTSPlayer(BasePokerPlayer):
@@ -126,12 +134,12 @@ class MCTSPlayer(BasePokerPlayer):
             n_rollouts_eval: int=100
         ): 
         self.n_ehs_bins = n_ehs_bins
-        # Q[opponent_last_action, hand_strength_bin, action_idx]
+        # Q[position, round, last_action, hand_strength_bin, action_idx]
         # Q[-1, :, :] is reserved for when you go first
         # TODO: add action history
         self.is_training = is_training
-        self.Q = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
-        self.N = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
+        self.Q = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
+        self.N = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.k = k
         self.n_rollouts_train = n_rollouts_train
         self.n_rollouts_eval = n_rollouts_eval
@@ -168,8 +176,8 @@ class MCTSPlayer(BasePokerPlayer):
             search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, self.use_stack_diff)
             if i % log_interval == 0:
                 # print mean q values over first 2 axes (so you get q values for each action)
-                mean_q_values = np.mean(self.Q, axis=(0, 1))
-                mean_n_values = np.mean(self.N, axis=(0, 1))
+                mean_q_values = np.mean(self.Q, axis=tuple(range(self.Q.ndim-1)))
+                mean_n_values = np.mean(self.N, axis=tuple(range(self.N.ndim-1)))
                 assert len(mean_q_values) == len(mean_n_values) == N_ACTIONS
                 print(f"Mean Q values: {[f'{REAL_ACTIONS[i]}: {mean_q_values[i]:.2f}' for i in range(N_ACTIONS)]}")
                 print(f"Mean N values: {[f'{REAL_ACTIONS[i]}: {mean_n_values[i]:.2f}' for i in range(N_ACTIONS)]}")
@@ -197,8 +205,8 @@ class MCTSPlayer(BasePokerPlayer):
         # simulate for alloted budget 
         search(self.emulator, (game_state, []), self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, self.use_stack_diff)
         # argmax best action
-        obs = get_obs(hole_card, round_state, self.n_ehs_bins)
-        a = np.argmax(self.Q[obs[0], obs[1], :])
+        obs = get_obs(hole_card, round_state, self.uuid, self.n_ehs_bins)
+        a = np.argmax(self.Q[obs])
         return REAL_ACTIONS[a]
 
     def receive_game_start_message(self, game_info):
