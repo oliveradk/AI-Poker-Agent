@@ -88,13 +88,15 @@ def get_a_set(valid_actions):
     return [i for i, action in enumerate(REAL_ACTIONS) if action in valid_acts]
 
 
-def select_action(Q, N, obs, a_set, c):
-    ucb = c * np.sqrt(
-        np.log(N[obs].sum()) / (N[obs])
-    )
+def select_action(Q, N, obs, a_set, c, use_ucb: bool=True):
+    Q_obs = Q[obs].copy()
+    if use_ucb:
+        ucb = c * np.sqrt(
+            np.log(N[obs].sum()) / (N[obs])
+        )
+        Q_obs += ucb
     vals = -np.inf * np.ones(N_ACTIONS)
-    Q_ucb = Q[obs] + ucb
-    vals[a_set] = Q_ucb[a_set]
+    vals[a_set] = Q_obs[a_set]
     return np.argmax(vals)
 
  # TODO: implement "smooth" ucb

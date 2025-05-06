@@ -132,7 +132,6 @@ class MCTSPlayer(BasePokerPlayer):
     def __init__(
         self, 
         n_ehs_bins: int, 
-        is_training: bool, 
         n_rollouts_train: int=100,
         n_rollouts_eval: int=100
     ): 
@@ -140,7 +139,6 @@ class MCTSPlayer(BasePokerPlayer):
         # Q[position, round, last_action, hand_strength_bin, action_idx]
         # Q[-1, :, :] is reserved for when you go first
         # TODO: add action history
-        self.is_training = is_training
         self.Q = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.N = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.n_rollouts_train = n_rollouts_train
@@ -167,7 +165,7 @@ class MCTSPlayer(BasePokerPlayer):
         #     self.emulator.register_player(info["uuid"], RandomPlayer())
     
     # TODO: what are we doing
-    def train(self, n_games, players_info, save_dir: str, log_interval: int=100):
+    def train(self, n_games, players_info, save_dir: str):
         if self.emulator is None:
             raise ValueError("Emulator not set")
 
@@ -176,13 +174,6 @@ class MCTSPlayer(BasePokerPlayer):
             s = self.emulator.start_new_round(initial_state)
             init_stacks = _get_init_stacks(s)
             search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, init_stacks)
-            if i % log_interval == 0:
-                # print mean q values over first 2 axes (so you get q values for each action)
-                mean_q_values = np.mean(self.Q, axis=tuple(range(self.Q.ndim-1)))
-                mean_n_values = np.mean(self.N, axis=tuple(range(self.N.ndim-1)))
-                assert len(mean_q_values) == len(mean_n_values) == N_ACTIONS
-                print(f"Mean Q values: {[f'{REAL_ACTIONS[i]}: {mean_q_values[i]:.2f}' for i in range(N_ACTIONS)]}")
-                print(f"Mean N values: {[f'{REAL_ACTIONS[i]}: {mean_n_values[i]:.2f}' for i in range(N_ACTIONS)]}")
         self.save(save_dir)
 
     # Setup Emulator object by registering game information
@@ -208,9 +199,10 @@ class MCTSPlayer(BasePokerPlayer):
         init_stacks = _get_init_stacks(s)
         # simulate for alloted budget 
         search(self.emulator, s, self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, init_stacks)
-        # argmax best action
+        # argmax best valid action
         obs = get_obs(hole_card, round_state, self.uuid, self.n_ehs_bins)
-        a = np.argmax(self.Q[obs])
+        a_set = list(range(N_ACTIONS))#get_a_set(_get_valid_actions(s))
+        a = select_action(self.Q, self.N, obs, a_set, c=0, use_ucb=False)
         return REAL_ACTIONS[a]
 
     def receive_game_start_message(self, game_info):
