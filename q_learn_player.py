@@ -1,13 +1,9 @@
 from pypokerengine.players import BasePokerPlayer
 import numpy as np
-import random
-import deuces
-from deuces import Deck, Card
+from hand_eval import evaluate_hand
 
 REAL_ACTIONS = ["fold", "call", "raise"]
 N_ACTIONS = len(REAL_ACTIONS)
-
-EVALUATOR = deuces.Evaluator()
 
 
 def _get_action_bin(action: dict | None):
@@ -18,36 +14,12 @@ def _get_action_bin(action: dict | None):
         return -1 
     return REAL_ACTIONS.index(action)
 
-def str_to_card(card_str: str) -> Card:
-    return Card.new(f"{card_str[1]}{card_str[0].lower()}")
 
-# TODO: use hand evaluator
 def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
     """
     Implements expected hand strength using monte-carlo simulation
     """
-    # get set of remaining possible cards
-    private_cards = [str_to_card(card) for card in private_cards]
-    community_cards = [str_to_card(card) for card in community_cards]
-    known_cards = set(private_cards + community_cards)
-    deck = Deck().cards
-    remaining_cards = [card for card in deck if card not in known_cards]
-    # sample n_samples from this set of remaning community cards and opponent hards
-    wins = 0 
-    ties = 0
-    community_needed = 5 - len(community_cards)
-    opponent_needed = 2
-    for _ in range(n_samples):
-        sampled_cards = random.sample(remaining_cards, community_needed + opponent_needed)
-        opponent_cards = sampled_cards[:opponent_needed]
-        board = community_cards + sampled_cards[opponent_needed:]
-        our_hand_rank = EVALUATOR.evaluate(private_cards, board)
-        opponent_hand_rank = EVALUATOR.evaluate(opponent_cards, board)
-        if our_hand_rank > opponent_hand_rank:
-            wins += 1
-        elif our_hand_rank == opponent_hand_rank:
-            ties += 1
-    ehs = (wins + 0.5 * ties) / n_samples
+    ehs = evaluate_hand(private_cards, community_cards, n_samples)
     ehs = ehs ** 2
     # bin value 
     ehs_bin = int(ehs * n_bins)
@@ -61,7 +33,9 @@ def get_obs(hole_card, round_state, n_bins):
     return oppo_last_act_idx, ehs_bin
 
 # NOTE: this is technically variable for different actions...
-def get_exploration_value(round_state, uuid, n_rounds: int=4, n_raises: int=3, k=0.5):
+def get_exploration_value(round_state, uuid, use_stack_diff, n_rounds: int=4, n_raises: int=3, k=0.5):
+    if not use_stack_diff:
+        return np.sqrt(2.0)
     pot_size = round_state["pot"]["main"]["amount"] # ignore side pots
     # remaining value this round
     n_bets = n_raises + 1
@@ -84,7 +58,15 @@ def update(Q, N, oppo_last_act_idx, ehs_bin, action_idx, reward):
     Q[oppo_last_act_idx, ehs_bin, action_idx] += update
     
 
-def compute_reward(winners, round_state, uuid):
+def compute_reward(winners, round_state, uuid, use_stack_diff):
+    if len(winners) == 1 and winners[0]["uuid"] == uuid:
+        frac_pot = 1.0
+    elif len(winners) == 2:
+        frac_pot = 0.5
+    else:
+        frac_pot = 0.0
+    if not use_stack_diff: 
+        return frac_pot
     # get player bets throughout round 
     player_bets = 0
     for street_bets in round_state["action_histories"].values():
@@ -97,14 +79,7 @@ def compute_reward(winners, round_state, uuid):
     pot_size = round_state["pot"]["main"]["amount"]
     for side_pot in round_state["pot"]["side"]:
         pot_size += side_pot["amount"]
-    # compute pot reward
-    if len(winners) == 1 and winners[0]["uuid"] == uuid:
-        pot_reward = pot_size 
-    elif len(winners) == 2:
-        pot_reward = pot_size / 2
-    else:
-        pot_reward = 0
-    return pot_reward - player_bets
+    return pot_size * frac_pot - player_bets
 
 def get_a_set(valid_actions):
     valid_acts = [action["action"] for action in valid_actions]
@@ -115,8 +90,9 @@ def select_action(Q, N, obs, a_set, c):
     ucb = c * np.sqrt(
         np.log(N[obs[0], obs[1], :].sum()) / (N[obs[0], obs[1], :])
     )
-    vals = Q[obs[0], obs[1], :] + ucb
-    vals[np.array(a_set)] = float("-inf")
+    vals = -np.inf * np.ones(N_ACTIONS)
+    Q_ucb = Q[obs[0], obs[1], :] + ucb
+    vals[a_set] = Q_ucb[a_set]
     return np.argmax(vals)
 
  # TODO: implement "smooth" ucb
@@ -145,7 +121,7 @@ class QLearningPlayer(BasePokerPlayer):
     # based on https://cdn.aaai.org/ocs/ws/ws1227/8811-38072-1-PB.pdf
     # NOTE: currently the agent is unaware of rounds
     
-    def __init__(self, n_ehs_bins: int, is_training: bool, k: float=0.5, use_stack_diff: bool=True): 
+    def __init__(self, n_ehs_bins: int, is_training: bool, k: float=0.5, use_stack_diff: bool=False): 
         self.n_ehs_bins = n_ehs_bins
         # Q[opponent_last_action, hand_strength_bin, action_idx]
         # Q[-1, :, :] is reserved for when you go first
@@ -155,6 +131,7 @@ class QLearningPlayer(BasePokerPlayer):
         self.N = np.zeros((N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
         self.k = k
         self.history = []
+        self.use_stack_diff = use_stack_diff
         
         # logging 
         self.round_results = []
@@ -173,7 +150,7 @@ class QLearningPlayer(BasePokerPlayer):
        # get state
        obs = get_obs(hole_card, round_state, self.n_ehs_bins)
        # compute exploration value from max payoff 
-       c = get_exploration_value(round_state, self.uuid, n_rounds=4, n_raises=3, k=self.k)
+       c = get_exploration_value(round_state, self.uuid, self.use_stack_diff, n_rounds=4, n_raises=3, k=self.k)
        # sample action
        action_idx = sample_action(self.Q, self.N, obs, valid_actions, c=c)
        # update history
@@ -198,7 +175,7 @@ class QLearningPlayer(BasePokerPlayer):
 
     def receive_round_result_message(self, winners, hand_info, round_state):
         # compute reward 
-        reward = compute_reward(winners, round_state, self.uuid)
+        reward = compute_reward(winners, round_state, self.uuid, self.use_stack_diff)
         # update Q function, N function
         for (oppo_last_act_idx, ehs_bin, action_idx) in self.history:
             update(self.Q, self.N, oppo_last_act_idx, ehs_bin, action_idx, reward)
