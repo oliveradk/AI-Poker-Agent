@@ -11,6 +11,7 @@ from q_learn_player import (
     REAL_ACTIONS,
     N_ACTIONS,
     N_STREETS,
+    init_Q_and_N,
     get_obs,
     get_explore_weight,
     update,
@@ -134,14 +135,10 @@ class MCTSPlayer(BasePokerPlayer):
         self, 
         n_ehs_bins: int, 
         n_rollouts_train: int=100,
-        n_rollouts_eval: int=100
+        n_rollouts_eval: int=100 # TODO: rollout eval depth-limit
     ): 
         self.n_ehs_bins = n_ehs_bins
-        # Q[position, round, last_action, hand_strength_bin, action_idx]
-        # Q[-1, :, :] is reserved for when you go first
-        # TODO: add action history
-        self.Q = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
-        self.N = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
+        self.Q, self.N = init_Q_and_N(n_ehs_bins)
         self.n_rollouts_train = n_rollouts_train
         self.n_rollouts_eval = n_rollouts_eval
         self.history = []

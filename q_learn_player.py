@@ -14,7 +14,8 @@ N_STREETS = 4
 N_RAISES = 3
 SMALL_BET = 2 
 BIG_BET = 4
-MAX_GAIN = 2 * (N_RAISES + 1) * SMALL_BET + 2 * (N_RAISES+1) * BIG_BET
+MAX_GAIN = 2 * (N_RAISES) * SMALL_BET + 2 * (N_RAISES) * BIG_BET
+MAX_RAISES = N_STREETS * (N_RAISES)
 
 
 def _get_action_bin(action: dict | None):
@@ -32,6 +33,29 @@ def _get_stack(seats, uuid):
     seat = next((s for s in seats if s["uuid"] == uuid))
     return seat["stack"]
 
+def _get_last_aggressor(round_state, uuid):
+    for street_history in reversed(round_state["action_histories"].values()): # NOTE: relies on ordered dicts
+        for action in reversed(street_history):
+            if action["action"] == "RAISE":
+                return int(action["uuid"] != uuid)
+    return -1
+
+def _get_raise_count(round_state):
+    raise_count = 0
+    for street_history in round_state["action_histories"].values():
+        for action in street_history:
+            if action["action"] == "RAISE":
+                raise_count += 1
+    return raise_count
+
+
+def init_Q_and_N(n_bins: int):
+    # Q[position, street, bet_count, last_aggressor, hand_strength_bin, action_idx] (5760)
+    Q = np.zeros((2, N_STREETS, MAX_RAISES, 2+1, n_bins, N_ACTIONS))
+    N = np.zeros((2, N_STREETS, MAX_RAISES, 2+1, n_bins, N_ACTIONS))
+    return Q, N
+
+
 
 def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
     """
@@ -48,10 +72,11 @@ def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
 def get_obs(hole_card, round_state, uuid, n_bins):
     # position, street, last_action, ehs_bin
     position = 0 if round_state["seats"][_get_dealer_pos(round_state)]["uuid"] == uuid else 1
+    raises = _get_raise_count(round_state)
+    last_aggressor = _get_last_aggressor(round_state, uuid)
     street = STREET_IDX[round_state["street"]]
     ehs_bin = get_EHS(hole_card, round_state["community_card"], n_bins)
-    oppo_last_act_idx = _get_action_bin(_get_last_action(round_state))
-    return position, street, oppo_last_act_idx, ehs_bin
+    return position, street, raises, last_aggressor, ehs_bin
 
 # TODO: add the round-weighting thing
 def get_explore_weight(round_state, uuid, use_stack_diff, k=0.5):
@@ -89,6 +114,7 @@ def get_a_set(valid_actions):
 
 
 def select_action(Q, N, obs, a_set, c, use_ucb: bool=True):
+    # TODO: add option for smooth ucb
     Q_obs = Q[obs].copy()
     if use_ucb:
         ucb = c * np.sqrt(
@@ -108,7 +134,6 @@ def sample_action(
     c: float=1.4
 ):
     a_set = get_a_set(valid_actions)
-    print("obs", obs)
     if N[obs].sum() == 0:
         action_idx = np.random.choice(a_set)
     else:
@@ -148,12 +173,8 @@ class QLearningPlayer(BasePokerPlayer):
     
     def __init__(self, n_ehs_bins: int, is_training: bool, k: float=0.5, use_stack_diff: bool=False): 
         self.n_ehs_bins = n_ehs_bins
-        # Q[position, street, last_action, hand_strength_bin, action_idx]
-        # Q[-1, :, :] is reserved for when you go first
-        # TODO: add action history
         self.is_training = is_training
-        self.Q = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
-        self.N = np.zeros((2, N_STREETS, N_ACTIONS+1, n_ehs_bins, N_ACTIONS))
+        self.Q, self.N = init_Q_and_N(n_ehs_bins)
         self.k = k
         self.history = []
         self.use_stack_diff = use_stack_diff
@@ -206,6 +227,12 @@ class QLearningPlayer(BasePokerPlayer):
         self.history = []
         # log result
         self._log_result(winners, hand_info, round_state, reward)
+
+        round_number = round_state["round_count"]
+        if round_number % 100 == 0:
+            print(f"Round {round_number} complete")
+            print("frac states explored", np.mean(self.N > 0))
+            print("mean action dist", np.mean(self.Q, axis=tuple(range(len(self.Q.shape) - 1))))
 
     
     def _log_result(self, winners, hand_info, round_state, reward):

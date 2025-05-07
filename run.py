@@ -11,13 +11,14 @@ from q_learn_player import QLearningPlayer
 
 # setup config
 CONFIG = {
-    "initial_stack": 10000,
-    "max_round": 1000,
+    "initial_stack": 100000,
+    "max_round": 10000,
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
     "use_stack_diff": True,
     "seed": 46,
     "k": 0.5,
+    "verbose": True,
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 os.makedirs(exp_dir, exist_ok=True)
@@ -28,8 +29,8 @@ random.seed(CONFIG["seed"])
 config = setup_config(max_round=CONFIG["max_round"], initial_stack=CONFIG["initial_stack"], small_blind_amount=CONFIG["small_blind_amount"])
 my_player = QLearningPlayer(n_ehs_bins=CONFIG["n_ehs_bins"], is_training=True, use_stack_diff=CONFIG["use_stack_diff"], k=CONFIG["k"])
 config.register_player(name="random_player", algorithm=RandomPlayer())
-config.register_player(name="mcts_player", algorithm=my_player)
-game_result = start_poker(config, verbose=1)
+config.register_player(name="q_learn_player", algorithm=my_player)
+game_result = start_poker(config, verbose=CONFIG["verbose"])
 
 # save q function and n function
 np.save(os.path.join(exp_dir, "q_values.npy"), my_player.Q)
