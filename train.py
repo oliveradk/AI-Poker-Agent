@@ -15,13 +15,15 @@ CONFIG = {
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
     "n_rollouts_train": 5, 
-    "n_rollouts_eval": 0,
-    "n_games_per_epoch": 25, 
+    "n_rollouts_eval": 5,
+    "eval_dl": 2,
+    "n_games_per_epoch": 50, 
     "n_epochs": 3,
     "n_eval_rounds": 50,
     "seed": 42,
     "load_dir": None, 
-    "eval_oppo": "raise_player"
+    "eval_oppo": "random_player",
+    "verbose": True
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 os.makedirs(exp_dir, exist_ok=True)
@@ -33,7 +35,8 @@ random.seed(CONFIG["seed"])
 mtcs_player = MCTSPlayer(
     n_ehs_bins=CONFIG["n_ehs_bins"], 
     n_rollouts_train=CONFIG["n_rollouts_train"],
-    n_rollouts_eval=CONFIG["n_rollouts_eval"]
+    n_rollouts_eval=CONFIG["n_rollouts_eval"], 
+    eval_dl=CONFIG["eval_dl"]
 )
 
 mtcs_player.set_emulator(
@@ -93,7 +96,9 @@ for epoch in range(epochs):
     print(f"Epoch {epoch} done")
 
     # eval against random player 
-    round_results, game_result = eval_against_player(mtcs_player, n_eval_rounds=CONFIG["n_eval_rounds"], oppo=oppo, oppo_name=CONFIG["eval_oppo"], verbose=1)
+    round_results, game_result = eval_against_player(
+        mtcs_player, n_eval_rounds=CONFIG["n_eval_rounds"], oppo=oppo, oppo_name=CONFIG["eval_oppo"], verbose=CONFIG["verbose"]
+    )
     mean_eval_reward.append(np.mean([r["reward"] for r in round_results]))
 
     # reload weights (to undo any changes from eval)

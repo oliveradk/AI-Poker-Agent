@@ -11,10 +11,11 @@ import itertools
 
 MAX_ROUNDS = 500
 N_ROLLOUTS = 0
-VERBOSE = 0
+VERBOSE = 1
 
+# output/20250506_185704 - severe cycling
 EXP_DIR = sys.argv[1]
-EPOCHS = max([int(d) for d in os.listdir(EXP_DIR) if os.path.isdir(os.path.join(EXP_DIR, d)) and d.isdigit()]) + 1
+EPOCHS = 5 #max([int(d) for d in os.listdir(EXP_DIR) if os.path.isdir(os.path.join(EXP_DIR, d)) and d.isdigit()]) + 1
 EVAL_DIR = os.path.join(EXP_DIR, "eval")
 os.makedirs(EVAL_DIR, exist_ok=True)
 CONFIG = json.load(open(os.path.join(EXP_DIR, "config.json")))
@@ -25,7 +26,8 @@ def create_player(epoch: int):
     player = MCTSPlayer(
         n_ehs_bins=CONFIG["n_ehs_bins"], 
         n_rollouts_train=CONFIG["n_rollouts_train"],
-        n_rollouts_eval=N_ROLLOUTS
+        n_rollouts_eval=N_ROLLOUTS, 
+        eval_dl=CONFIG["eval_dl"]
     )
     player.set_emulator(
         player_num=2, 

@@ -86,20 +86,24 @@ def is_terminal(s):
 
 
 # TODO: add depth-limit for inference
-def search(emulator, s, Q, N, n_rollouts: int, n_bins, init_stacks):
+def search(emulator, s, Q, N, n_rollouts: int, n_bins, init_stacks, depth_limit):
     for i in range(n_rollouts):
-        out_of_tree = [False for _ in range(_get_n_players(s))]
-        simulate(emulator, s, Q, N, out_of_tree, n_bins, init_stacks)
+        out_of_tree = np.zeros(_get_n_players(s), dtype=bool)
+        simulate(emulator, s, Q, N, out_of_tree, n_bins, init_stacks, depth_limit)
 
 
-def simulate(emulator, s, Q, N, out_of_tree, n_bins, init_stacks):
+def simulate(emulator, s, Q, N, out_of_tree, n_bins, init_stacks, depth_limit):
     if is_terminal(s):
         # get winners from events?
         return compute_sim_rewards(s, init_stacks)
+    if depth_limit == 0:
+        out_of_tree[:] = True
+    else: 
+        depth_limit -= 1
     # check if out of tree
     p_i = get_player(s)
     if out_of_tree[p_i]:
-        return rollout(emulator, s, Q, N, out_of_tree, n_bins, init_stacks)
+        return rollout(emulator, s, Q, N, out_of_tree, n_bins, init_stacks, depth_limit)
     # get information state
     obs = get_obs_sim(s, n_bins)
     # sample action
@@ -113,17 +117,17 @@ def simulate(emulator, s, Q, N, out_of_tree, n_bins, init_stacks):
     # get next state
     s_next = emulator.apply_action(s[0], REAL_ACTIONS[a])
     # sample until terminal
-    rs = simulate(emulator, s_next, Q, N, out_of_tree, n_bins, init_stacks)
+    rs = simulate(emulator, s_next, Q, N, out_of_tree, n_bins, init_stacks, depth_limit)
     # backpropagate
     update(Q, N, obs + (a,), rs[p_i])
     return rs
 
 
-def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, init_stacks):
+def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, init_stacks, depth_limit):
     a_set = get_a_set(_get_valid_actions(s))
     a = np.random.choice(a_set)
     s_next = emulator.apply_action(s[0], REAL_ACTIONS[a])
-    return simulate(emulator, s_next, Q, N, out_of_tree, n_bins, init_stacks)
+    return simulate(emulator, s_next, Q, N, out_of_tree, n_bins, init_stacks, depth_limit)
 
 
 # TODO: evaluate early players against later players
@@ -135,14 +139,19 @@ class MCTSPlayer(BasePokerPlayer):
         self, 
         n_ehs_bins: int, 
         n_rollouts_train: int=100,
-        n_rollouts_eval: int=100 # TODO: rollout eval depth-limit
+        n_rollouts_eval: int=100, # TODO: rollout eval depth-limit
+        train_dl: int=float("inf"),
+        eval_dl: int=2
     ): 
         self.n_ehs_bins = n_ehs_bins
         self.Q, self.N = init_Q_and_N(n_ehs_bins)
         self.n_rollouts_train = n_rollouts_train
         self.n_rollouts_eval = n_rollouts_eval
+        self.train_dl = train_dl
+        self.eval_dl = eval_dl
         self.history = []
         self.emulator = None
+
         # logging 
         self.round_results = []
     
@@ -171,7 +180,7 @@ class MCTSPlayer(BasePokerPlayer):
         for i in tqdm(range(n_games), desc="Training games"):
             s = self.emulator.start_new_round(initial_state)
             init_stacks = _get_init_stacks(s)
-            search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, init_stacks)
+            search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, init_stacks, self.train_dl)
         self.save(save_dir)
 
     # Setup Emulator object by registering game information
@@ -196,7 +205,7 @@ class MCTSPlayer(BasePokerPlayer):
         s = (game_state, [])
         init_stacks = _get_init_stacks(s)
         # simulate for alloted budget 
-        search(self.emulator, s, self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, init_stacks)
+        search(self.emulator, s, self.Q, self.N, self.n_rollouts_eval, self.n_ehs_bins, init_stacks, self.eval_dl)
         # argmax best valid action
         obs = get_obs(hole_card, round_state, self.uuid, self.n_ehs_bins)
         a_set = get_a_set(_get_valid_actions(s))
