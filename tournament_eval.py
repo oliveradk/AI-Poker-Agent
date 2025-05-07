@@ -139,6 +139,8 @@ def main():
     
     # Determine available epochs
     available_epochs = [int(d) for d in os.listdir(exp_dir) if os.path.isdir(os.path.join(exp_dir, d)) and d.isdigit()]
+    # filter out epochs that don't have a model checkpoint
+    available_epochs = [e for e in available_epochs if os.path.exists(os.path.join(exp_dir, f"{e}", "Q.npy"))]
     
     # Determine which epochs to evaluate
     if args.epochs:
