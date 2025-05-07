@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=poker_mcts        # Job name
-#SBATCH --output=output_log/job_%j.out      # Output file (%j expands to jobID)
-#SBATCH --error=output_log/job_%j.err       # Error file (%j expands to jobID)
+#SBATCH --output=output_log/eval_job_%j.out      # Output file (%j expands to jobID)
+#SBATCH --error=output_log/eval_job_%j.err       # Error file (%j expands to jobID)
 #SBATCH --ntasks=1               # Number of tasks
 #SBATCH --cpus-per-task=1        # Number of CPU cores per task
 #SBATCH --mem=1G                 # Memory required (1 GB in this example)
