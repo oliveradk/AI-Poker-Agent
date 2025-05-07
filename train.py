@@ -17,9 +17,9 @@ CONFIG = {
     "n_rollouts_train": 100, # TODO: 100
     "n_rollouts_eval": 5,
     "eval_dl": 2,
-    "n_games_per_epoch": 50, 
-    "n_epochs": 5,
-    "n_eval_rounds": 10,
+    "n_games_per_epoch": 10, 
+    "n_epochs": 1000,
+    "n_eval_rounds": 0,
     "seed": 42,
     "load_dir": None, 
     "eval_oppo": "random_player",
@@ -85,7 +85,6 @@ if CONFIG["load_dir"] is not None:
         mtcs_player, n_eval_rounds=CONFIG["n_eval_rounds"], oppo=oppo, oppo_name=CONFIG["eval_oppo"], verbose=1
     )
 
-mean_eval_reward = []
 for epoch in range(epochs):
     # create epoch dir
     epoch_dir = os.path.join(exp_dir, f"{epoch}")
@@ -99,7 +98,6 @@ for epoch in range(epochs):
     round_results, game_result = eval_against_player(
         mtcs_player, n_eval_rounds=CONFIG["n_eval_rounds"], oppo=oppo, oppo_name=CONFIG["eval_oppo"], verbose=CONFIG["verbose"]
     )
-    mean_eval_reward.append(np.mean([r["reward"] for r in round_results]))
 
     # reload weights (to undo any changes from eval)
     mtcs_player.load(epoch_dir)
@@ -108,12 +106,3 @@ for epoch in range(epochs):
     # save results
     with open(os.path.join(epoch_dir, f"round_results.json"), "w") as f:
         json.dump(round_results, f)
-
-
-import matplotlib.pyplot as plt
-
-plt.plot(mean_eval_reward, label="mean eval reward")
-plt.legend()
-plt.savefig(os.path.join(exp_dir, "mean_eval_reward.png"))
-
-print("done training")
