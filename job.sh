@@ -7,10 +7,8 @@
 #SBATCH --mem=1G                 # Memory required (1 GB in this example)
 #SBATCH --time=12:00:00          # Time limit (HH:MM:SS)
 
-module load conda 
+module load conda/latest
 conda activate poker_mcts
-
-cd AI-Poker-Agent
 
 python train.py
 
