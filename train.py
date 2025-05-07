@@ -1,6 +1,5 @@
 import os
 import json
-import matplotlib.pyplot as plt
 import numpy as np
 import datetime as dt
 import random
