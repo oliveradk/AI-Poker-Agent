@@ -93,6 +93,9 @@ def select_matchups(epochs, elo_db, new_epochs=None, n_matchups=None):
             for other_new in [f"{e}" for e in new_epochs]:
                 if other_new != new_agent:
                     matchups.append((int(new_agent), int(other_new)))
+            
+            # Add RaisedPlayer matchup for every agent
+            matchups.append((int(new_agent), "raise_player"))
     return matchups
 
 def create_player(epoch, exp_dir, config):
@@ -118,37 +121,35 @@ def eval_players(epoch_a, epoch_b, rounds, exp_dir, config, verbose, player_b_ty
     
     if player_b_type == "custom":
         player_b = create_player(epoch_b, exp_dir, config)
-        player_b_name = f"player_{epoch_b}"
+        player_b_name = f"{epoch_b}"
     elif player_b_type == "raise":
         player_b = RaisedPlayer()
-        player_b_name = "RaisedPlayer"
+        player_b_name = "raise"
     
     game_config = setup_config(max_round=rounds, initial_stack=config["initial_stack"], small_blind_amount=config["small_blind_amount"])
     game_config.register_player(name=f"player_{epoch_a}", algorithm=player_a)
-    game_config.register_player(name=player_b_name, algorithm=player_b)
+    game_config.register_player(name=f"player_{player_b_name}", algorithm=player_b)
 
     game_result = start_poker(game_config, verbose=verbose)
-    
     p_a_stack = game_result["players"][0]["stack"]
     p_b_stack = game_result["players"][1]["stack"]
 
-    
     return p_a_stack, p_b_stack
 
-def log_matchup_performance(log_file, epoch_a, player_b_name, p_a_stack, p_b_stack, outcome):
+def log_matchup_performance(log_file, agent_a, agent_b, p_a_stack, p_b_stack, outcome):
     """Log matchup performance to CSV file"""
     file_exists = os.path.isfile(log_file)
     
     with open(log_file, 'a', newline='') as csvfile:
-        fieldnames = ['epoch_a', 'player_b', 'a_stack', 'b_stack', 'rounds', 'outcome']
+        fieldnames = ['agent_a', 'agent_b', 'a_stack', 'b_stack', 'outcome']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
         if not file_exists:
             writer.writeheader()
         
         writer.writerow({
-            'epoch_a': epoch_a,
-            'player_b': player_b_name,
+            'agent_a': agent_a,
+            'agent_b': agent_b,
             'a_stack': p_a_stack,
             'b_stack': p_b_stack,
             'outcome': outcome
@@ -188,7 +189,7 @@ def main():
     matchup_log_path = os.path.join(eval_dir, MATCHUP_LOG_FILENAME)
     
     # Identify new epochs (not in elo_db)
-    existing_epochs = [int(epoch) for epoch in elo_db.keys()]
+    existing_epochs = [int(epoch) for epoch in elo_db.keys() if epoch.isdigit()]
     new_epochs = [epoch for epoch in epochs_to_evaluate if epoch not in existing_epochs]
     
     print(f"Evaluating epochs: {epochs_to_evaluate}")
@@ -205,51 +206,39 @@ def main():
     matchups = select_matchups(epochs_to_evaluate, elo_db, new_epochs, n_matchups)
     print(f"Selected {len(matchups)} matchups for evaluation")
     
-    # Add RaisedPlayer to opponents
-    if "RaisedPlayer" not in elo_db:
-        elo_db["RaisedPlayer"] = DEFAULT_ELO
-    
-    # First evaluate all agents against RaisedPlayer
-    print("\nEvaluating all agents against RaisedPlayer:")
-    for epoch in tqdm(epochs_to_evaluate, desc="vs RaisedPlayer"):
-        # Evaluate against RaisedPlayer
-        p_a_stack, p_b_stack = eval_players(
-            epoch, None, args.max_rounds, exp_dir, config, args.verbose, player_b_type="raise"
-        )
-        
-        # Determine outcome for Elo calculation
-        outcome = determine_outcome(p_a_stack, p_b_stack)
-        
-        # Log matchup performance
-        log_matchup_performance(
-            matchup_log_path, epoch, "raise_player", p_a_stack, p_b_stack, outcome
-        )
-        
-        # Print results
-        print(f"\nMatch: {epoch} vs {'raise_player'}")
-        print(f"Final stacks: {epoch}={p_a_stack}, {'raise_player'}={p_b_stack}")
-    
-    # Then run the regular matchups
-    print("\nEvaluating agent vs agent matchups:")
-    for matchup in tqdm(matchups, desc="Agent vs Agent"):
+    # Run all matchups (including vs RaisedPlayer) in a single loop
+    print("\nEvaluating all matchups:")
+    for matchup in tqdm(matchups, desc="Evaluating matchups"):
         epoch_a, epoch_b = matchup
         
         # Skip self-play for now
         if epoch_a == epoch_b:
             continue
         
+        # Determine player type
+        player_b_type = "raise" if epoch_b == "raise_player" else "custom"
+        
         # Evaluate the matchup
         p_a_stack, p_b_stack = eval_players(
-            epoch_a, epoch_b, args.max_rounds, exp_dir, config, args.verbose
+            epoch_a, epoch_b, args.max_rounds, exp_dir, config, args.verbose, 
+            player_b_type=player_b_type
         )
-        
+        agent_a = f"{epoch_a}"
+        agent_b = f"{epoch_b}" if player_b_type == "custom" else "raise"
         
         # Determine outcome for Elo calculation
         outcome = determine_outcome(p_a_stack, p_b_stack)
         
+        # Log matchup performance
+        log_matchup_performance(
+            matchup_log_path, agent_a, agent_b, p_a_stack, p_b_stack, outcome
+        )
+        
+        # Print results
+        print(f"\nMatch: {agent_a} vs {agent_b}")
+        print(f"Final stacks: {agent_a}={p_a_stack}, {agent_b}={p_b_stack}")
+        
         # Get current Elo ratings
-        agent_a = f"{epoch_a}"
-        agent_b = f"{epoch_b}"
         rating_a = elo_db.get(agent_a, DEFAULT_ELO)
         rating_b = elo_db.get(agent_b, DEFAULT_ELO)
         
@@ -258,17 +247,9 @@ def main():
         elo_db[agent_a] = new_rating_a
         elo_db[agent_b] = new_rating_b
         
-        # Log matchup performance
-        log_matchup_performance(
-            matchup_log_path, epoch_a, epoch_b, p_a_stack, p_b_stack, outcome
-        )
-        
-        # Print results
-        print(f"\nMatch: {epoch_a} vs {epoch_b}")
-        print(f"Final stacks: {epoch_a}={p_a_stack}, {epoch_b}={p_b_stack}")
+        print(f"Elo before: {agent_a}={rating_a:.1f}, {agent_b}={rating_b:.1f}")
+        print(f"Elo after: {agent_a}={new_rating_a:.1f}, {agent_b}={new_rating_b:.1f}")
 
-        print(f"Elo before: {epoch_a}={rating_a:.1f}, {epoch_b}={rating_b:.1f}")
-        print(f"Elo after: {epoch_a}={new_rating_a:.1f}, {epoch_b}={new_rating_b:.1f}")
         
         # Save Elo database after each match to ensure persistence
         save_elo_db(elo_db, elo_db_path)
@@ -316,13 +297,13 @@ def main():
         if os.path.exists(matchup_log_path):
             with open(matchup_log_path, 'r') as csvfile:
                 reader = csv.DictReader(csvfile)
-                raised_matchups = [row for row in reader if row['player_b'] == 'RaisedPlayer']
+                raised_matchups = [row for row in reader if row['agent_b'] == 'raise']
                 
                 if raised_matchups:
                     # Group by epoch and calculate average stack difference
                     raise_results = {}
                     for row in raised_matchups:
-                        epoch = int(row['epoch_a'])
+                        epoch = int(row['agent_a'])
                         stack_diff = int(row['a_stack']) - int(row['b_stack'])
                         if epoch in raise_results:
                             raise_results[epoch].append(stack_diff)
