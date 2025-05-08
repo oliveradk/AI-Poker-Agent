@@ -135,22 +135,33 @@ class CustomPlayer(BasePokerPlayer):
 
     def __init__(
         self, 
-        n_ehs_bins: int, 
-        n_rollouts_train: int=100,
-        n_rollouts_eval: int=100, # TODO: rollout eval depth-limit
-        train_dl: int=float("inf"),
-        eval_dl: int=2,
-        k: float=0.5
+        n_ehs_bins: int | None = None,
+        n_rollouts_train: int | None = None,
+        n_rollouts_eval: int | None = None,
+        eval_dl: int | None = None,
+        k: float | None = None
     ): 
+        from_config = n_ehs_bins is None
+        if from_config:
+            # load from config
+            with open("config.json") as f:
+                config = json.load(f)
+            n_ehs_bins = config["n_ehs_bins"]
+            n_rollouts_train = config["n_rollouts_train"]
+            n_rollouts_eval = config["n_rollouts_eval"]
+            eval_dl = config["eval_dl"]
+            k = config["k"]
         self.n_ehs_bins = n_ehs_bins
-        self.Q, self.N = init_Q_and_N(n_ehs_bins)
         self.n_rollouts_train = n_rollouts_train
         self.n_rollouts_eval = n_rollouts_eval
-        self.train_dl = train_dl
         self.eval_dl = eval_dl
         self.k = k
         self.history = []
         self.emulator = None
+
+        self.Q, self.N = init_Q_and_N(n_ehs_bins)
+        if from_config:
+            self.load(".")
 
         # logging 
         self.round_results = []
@@ -180,7 +191,7 @@ class CustomPlayer(BasePokerPlayer):
         for i in tqdm(range(n_games), desc="Training games"):
             s = self.emulator.start_new_round(initial_state)
             init_stacks = _get_init_stacks(s)
-            search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, init_stacks, self.train_dl, k=self.k)
+            search(self.emulator, s, self.Q, self.N, self.n_rollouts_train, self.n_ehs_bins, init_stacks, float("inf"), k=self.k)
         self.save(save_dir)
 
     # Setup Emulator object by registering game information
@@ -235,14 +246,4 @@ class CustomPlayer(BasePokerPlayer):
         self.round_results.append(round_log)
 
     def setup_ai():
-        with open("config.json") as f:
-            config = json.load(f)
-        player = CustomPlayer(
-            n_ehs_bins=config["n_ehs_bins"],
-            n_rollouts_train=config["n_rollouts_train"],
-            n_rollouts_eval=config["n_rollouts_eval"],
-            eval_dl=config["eval_dl"],
-            k=config["k"]
-        )
-        player.load(".")
-        return player
+        return CustomPlayer()
