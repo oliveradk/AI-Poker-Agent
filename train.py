@@ -11,10 +11,12 @@ from raise_player import RaisedPlayer
 from mcts_player import MCTSPlayer
 
 
-# setup config
-load_dir = sys.argv[1] if len(sys.argv) > 1 else None
-n_eval_rounds = 0 if load_dir is None else 1000
-oppo_type = "raise_player" if len(sys.argv) < 3 else sys.argv[2]
+import argparse
+parser = argparse.ArgumentParser(description='Train a poker agent')
+parser.add_argument('--load_dir', type=str, default=None, help='Directory to load model from')
+parser.add_argument('--oppo_type', type=str, default='raise_player', help='Type of opponent to play against')
+parser.add_argument('--k', type=float, default=0.5, help='UCB weight')
+args = parser.parse_args()
 CONFIG = {
     "initial_stack": 10000,
     "small_blind_amount": 10,
@@ -24,11 +26,11 @@ CONFIG = {
     "eval_dl": 2,
     "n_games_per_epoch": 10, 
     "n_epochs": 1000,
-    "n_eval_rounds": n_eval_rounds,
-    "k": 0.5,
+    "n_eval_rounds": 0 if args.load_dir is None else 1000,
+    "k": args.k,
     "seed": 42,
-    "load_dir": load_dir, 
-    "eval_oppo": oppo_type,
+    "load_dir": args.load_dir, 
+    "eval_oppo": args.oppo_type,
     "verbose": True
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
