@@ -5,3 +5,5 @@ output_log/*
 nbs/
 submission
 submission.zip
+.clj-kondo/
+.lsp/
