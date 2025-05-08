@@ -16,17 +16,18 @@ parser = argparse.ArgumentParser(description='Train a poker agent')
 parser.add_argument('--load_dir', type=str, default=None, help='Directory to load model from')
 parser.add_argument('--oppo_type', type=str, default='raise_player', help='Type of opponent to play against')
 parser.add_argument('--k', type=float, default=0.5, help='UCB weight')
+parser.add_argument('--n_eval_rounds', type=int, default=0, help='Number of games to play per epoch')
 args = parser.parse_args()
 CONFIG = {
     "initial_stack": 10000,
     "small_blind_amount": 10,
     "n_ehs_bins": 5, 
-    "n_rollouts_train": 100, 
-    "n_rollouts_eval": 1,
+    "n_rollouts_train": 50, 
+    "n_rollouts_eval": 0,
     "eval_dl": 2,
     "n_games_per_epoch": 10, 
     "n_epochs": 1000,
-    "n_eval_rounds": 0 if args.load_dir is None else 1000,
+    "n_eval_rounds": args.n_eval_rounds,
     "k": args.k,
     "seed": 42,
     "load_dir": args.load_dir, 
