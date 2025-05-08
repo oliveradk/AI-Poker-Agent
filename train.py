@@ -3,25 +3,31 @@ import json
 import numpy as np
 import datetime as dt
 import random
+import sys
 
 from pypokerengine.api.game import setup_config, start_poker
 from randomplayer import RandomPlayer
 from raise_player import RaisedPlayer
 from mcts_player import MCTSPlayer
+
+
 # setup config
+load_dir = sys.argv[1] if len(sys.argv) > 1 else None
+n_eval_rounds = 0 if load_dir is None else 1000
+oppo_type = "raise_player" if len(sys.argv) < 3 else sys.argv[2]
 CONFIG = {
     "initial_stack": 10000,
     "small_blind_amount": 10,
-    "n_ehs_bins": 5,
-    "n_rollouts_train": 100,
-    "n_rollouts_eval": 5,
+    "n_ehs_bins": 5, 
+    "n_rollouts_train": 100, 
+    "n_rollouts_eval": 1,
     "eval_dl": 2,
     "n_games_per_epoch": 10, 
     "n_epochs": 1000,
-    "n_eval_rounds": 0,
+    "n_eval_rounds": n_eval_rounds,
     "seed": 42,
-    "load_dir": None, 
-    "eval_oppo": "random_player",
+    "load_dir": load_dir, 
+    "eval_oppo": oppo_type,
     "verbose": True
 }
 exp_dir = "output/" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
