@@ -11,11 +11,10 @@ STREET_IDX = {
 }
 N_ACTIONS = len(REAL_ACTIONS)
 N_STREETS = 4
-N_RAISES = 3
+N_RAISES = 4 
 SMALL_BET = 2 
 BIG_BET = 4
 MAX_GAIN = 2 * (N_RAISES) * SMALL_BET + 2 * (N_RAISES) * BIG_BET
-MAX_RAISES = N_STREETS * (N_RAISES)
 
 
 def _get_action_bin(action: dict | None):
@@ -34,25 +33,25 @@ def _get_stack(seats, uuid):
     return seat["stack"]
 
 def _get_last_aggressor(round_state, uuid):
-    for street_history in reversed(round_state["action_histories"].values()): # NOTE: relies on ordered dicts
-        for action in reversed(street_history):
-            if action["action"] == "RAISE":
+    street = round_state["street"]
+    for action in reversed(round_state["action_histories"][street]):
+        if action["action"] == "RAISE":
                 return int(action["uuid"] != uuid)
-    return -1
+    return 0 # default to 0 if no last aggressor - agent can tell b/c raise count is 0
 
 def _get_raise_count(round_state):
     raise_count = 0
-    for street_history in round_state["action_histories"].values():
-        for action in street_history:
-            if action["action"] == "RAISE":
-                raise_count += 1
+    street = round_state["street"]
+    for action in round_state["action_histories"][street]:
+        if action["action"] == "RAISE":
+            raise_count += 1
     return raise_count
 
 
 def init_Q_and_N(n_bins: int):
-    # Q[position, street, bet_count, last_aggressor, hand_strength_bin, action_idx] (5760)
-    Q = np.zeros((2, N_STREETS, MAX_RAISES, 2+1, n_bins, N_ACTIONS))
-    N = np.zeros((2, N_STREETS, MAX_RAISES, 2+1, n_bins, N_ACTIONS))
+    # Q[position, street, pot_size, street raises, last_aggressor, hand_strength_bin, action_idx] (5760)
+    Q = np.zeros((2, N_STREETS, 1+N_RAISES, 2, n_bins, N_ACTIONS))
+    N = np.zeros((2, N_STREETS, 1+N_RAISES, 2, n_bins, N_ACTIONS))
     return Q, N
 
 
