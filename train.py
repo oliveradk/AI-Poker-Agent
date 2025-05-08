@@ -25,6 +25,7 @@ CONFIG = {
     "n_games_per_epoch": 10, 
     "n_epochs": 1000,
     "n_eval_rounds": n_eval_rounds,
+    "k": 0.5,
     "seed": 42,
     "load_dir": load_dir, 
     "eval_oppo": oppo_type,
@@ -41,7 +42,8 @@ mtcs_player = MCTSPlayer(
     n_ehs_bins=CONFIG["n_ehs_bins"], 
     n_rollouts_train=CONFIG["n_rollouts_train"],
     n_rollouts_eval=CONFIG["n_rollouts_eval"], 
-    eval_dl=CONFIG["eval_dl"]
+    eval_dl=CONFIG["eval_dl"],
+    k=CONFIG["k"]
 )
 
 mtcs_player.set_emulator(
