@@ -6,6 +6,7 @@ from pypokerengine.utils.game_state_utils import restore_game_state, attach_hole
 import numpy as np
 import os
 from tqdm import tqdm
+import json
 
 from q_learn_player import (
     REAL_ACTIONS,
@@ -232,4 +233,16 @@ class MCTSPlayer(BasePokerPlayer):
     def _log_result(self, winners, hand_info, round_state, reward):
         round_log = get_round_log(round_state, reward, self.uuid)
         self.round_results.append(round_log)
-    
+
+    def setup_ai():
+        with open("config.json") as f:
+            config = json.load(f)
+        player = MCTSPlayer(
+            n_ehs_bins=config["n_ehs_bins"],
+            n_rollouts_train=config["n_rollouts_train"],
+            n_rollouts_eval=config["n_rollouts_eval"],
+            eval_dl=config["eval_dl"],
+            k=config["k"]
+        )
+        player.load(".")
+        return player
