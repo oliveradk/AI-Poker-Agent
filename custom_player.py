@@ -130,7 +130,7 @@ def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, init_stacks, depth
 
 
 
-class MCTSPlayer(BasePokerPlayer):
+class CustomPlayer(BasePokerPlayer):
     # based on https://cdn.aaai.org/ocs/ws/ws1227/8811-38072-1-PB.pdf
 
     def __init__(
@@ -237,7 +237,7 @@ class MCTSPlayer(BasePokerPlayer):
     def setup_ai():
         with open("config.json") as f:
             config = json.load(f)
-        player = MCTSPlayer(
+        player = CustomPlayer(
             n_ehs_bins=config["n_ehs_bins"],
             n_rollouts_train=config["n_rollouts_train"],
             n_rollouts_eval=config["n_rollouts_eval"],

@@ -1,5 +1,5 @@
 from pypokerengine.api.game import setup_config, start_poker
-from mcts_player import MCTSPlayer
+from custom_player import CustomPlayer
 from tqdm import tqdm
 import json
 import os
@@ -93,7 +93,7 @@ def select_matchups(epochs, elo_db, new_epochs=None, n_matchups=None):
 
 def create_player(epoch, exp_dir, config):
     epoch_dir = os.path.join(exp_dir, f"{epoch}")
-    player = MCTSPlayer(
+    player = CustomPlayer(
         n_ehs_bins=config["n_ehs_bins"], 
         n_rollouts_train=config["n_rollouts_train"],
         n_rollouts_eval=N_ROLLOUTS, 
