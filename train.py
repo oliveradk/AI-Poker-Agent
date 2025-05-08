@@ -13,7 +13,7 @@ CONFIG = {
     "initial_stack": 10000,
     "small_blind_amount": 10,
     "n_ehs_bins": 5,
-    "n_rollouts_train": 100, # TODO: 100
+    "n_rollouts_train": 100,
     "n_rollouts_eval": 5,
     "eval_dl": 2,
     "n_games_per_epoch": 10, 

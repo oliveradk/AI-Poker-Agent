@@ -37,7 +37,7 @@ def _get_hole_cards(s):
     state, events = s
     return [str(card) for card in state['table'].seats.players[state['next_player']].hole_card]
 
-def _get_valid_actions(s): #TODO:
+def _get_valid_actions(s):
     state, events = s
     if len(events) > 0:
         return next(e for e in events if "valid_actions" in e)["valid_actions"]
@@ -85,7 +85,6 @@ def is_terminal(s):
     return any(event["type"] == Event.ROUND_FINISH for event in events)
 
 
-# TODO: add depth-limit for inference
 def search(emulator, s, Q, N, n_rollouts: int, n_bins, init_stacks, depth_limit):
     for i in range(n_rollouts):
         out_of_tree = np.zeros(_get_n_players(s), dtype=bool)
@@ -130,7 +129,6 @@ def rollout(emulator: Emulator, s, Q, N, out_of_tree, n_bins, init_stacks, depth
     return simulate(emulator, s_next, Q, N, out_of_tree, n_bins, init_stacks, depth_limit)
 
 
-# TODO: evaluate early players against later players
 
 class MCTSPlayer(BasePokerPlayer):
     # based on https://cdn.aaai.org/ocs/ws/ws1227/8811-38072-1-PB.pdf
