@@ -1,12 +1,15 @@
 from pypokerengine.api.game import setup_config, start_poker
 from custom_player import CustomPlayer
+from raise_player import RaisedPlayer
 from tqdm import tqdm
 import json
 import os
 import argparse
 import math
 import matplotlib.pyplot as plt
+import csv
 
+# TODO: continually test againt player queue and raise player
 # Default configuration
 N_ROLLOUTS = 0
 EVAL_DL = 0
@@ -15,12 +18,13 @@ DEFAULT_ELO = 1200
 K_FACTOR = 32  # Elo K-factor (determines how quickly ratings change)
 MIN_MATCHUPS = 5  # Minimum number of matchups for new agents
 ELO_DB_FILENAME = "elo_ratings.json"
+MATCHUP_LOG_FILENAME = "matchup_performances.csv"
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Evaluate poker agents using Elo rating system")
     parser.add_argument("exp_dir", help="Experiment directory containing agent checkpoints")
     parser.add_argument("--epochs", type=int, help="Number of epochs to evaluate (default: all available)")
-    parser.add_argument("--max_rounds", type=int, default=1000, help="Maximum number of rounds per match")
+    parser.add_argument("--max_rounds", type=int, default=250, help="Maximum number of rounds per match")
     parser.add_argument("--verbose", type=int, default=True, help="Verbosity level")
     return parser.parse_args()
 
@@ -109,20 +113,46 @@ def create_player(epoch, exp_dir, config):
     player.load(epoch_dir)
     return player
 
-def eval_players(epoch_a, epoch_b, rounds, exp_dir, config, verbose):
+def eval_players(epoch_a, epoch_b, rounds, exp_dir, config, verbose, player_b_type="custom"):
     player_a = create_player(epoch_a, exp_dir, config)
-    player_b = create_player(epoch_b, exp_dir, config)
-
+    
+    if player_b_type == "custom":
+        player_b = create_player(epoch_b, exp_dir, config)
+        player_b_name = f"player_{epoch_b}"
+    elif player_b_type == "raise":
+        player_b = RaisedPlayer()
+        player_b_name = "RaisedPlayer"
+    
     game_config = setup_config(max_round=rounds, initial_stack=config["initial_stack"], small_blind_amount=config["small_blind_amount"])
     game_config.register_player(name=f"player_{epoch_a}", algorithm=player_a)
-    game_config.register_player(name=f"player_{epoch_b}", algorithm=player_b)
+    game_config.register_player(name=player_b_name, algorithm=player_b)
 
     game_result = start_poker(game_config, verbose=verbose)
-    p_a_results = player_a.round_results
-    p_b_results = player_b.round_results
-    player_a.round_results = []
-    player_b.round_results = []
-    return p_a_results, p_b_results, game_result
+    
+    p_a_stack = game_result["players"][0]["stack"]
+    p_b_stack = game_result["players"][1]["stack"]
+
+    
+    return p_a_stack, p_b_stack
+
+def log_matchup_performance(log_file, epoch_a, player_b_name, p_a_stack, p_b_stack, outcome):
+    """Log matchup performance to CSV file"""
+    file_exists = os.path.isfile(log_file)
+    
+    with open(log_file, 'a', newline='') as csvfile:
+        fieldnames = ['epoch_a', 'player_b', 'a_stack', 'b_stack', 'rounds', 'outcome']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        
+        if not file_exists:
+            writer.writeheader()
+        
+        writer.writerow({
+            'epoch_a': epoch_a,
+            'player_b': player_b_name,
+            'a_stack': p_a_stack,
+            'b_stack': p_b_stack,
+            'outcome': outcome
+        })
 
 def main():
     args = parse_arguments()
@@ -154,6 +184,9 @@ def main():
     elo_db_path = os.path.join(eval_dir, ELO_DB_FILENAME)
     elo_db = load_or_create_elo_db(elo_db_path)
     
+    # Set up matchup log file
+    matchup_log_path = os.path.join(eval_dir, MATCHUP_LOG_FILENAME)
+    
     # Identify new epochs (not in elo_db)
     existing_epochs = [int(epoch) for epoch in elo_db.keys()]
     new_epochs = [epoch for epoch in epochs_to_evaluate if epoch not in existing_epochs]
@@ -172,9 +205,33 @@ def main():
     matchups = select_matchups(epochs_to_evaluate, elo_db, new_epochs, n_matchups)
     print(f"Selected {len(matchups)} matchups for evaluation")
     
-    # Run matchups and update Elo ratings
-    match_results = []
-    for matchup in tqdm(matchups, desc="Evaluating matchups"):
+    # Add RaisedPlayer to opponents
+    if "RaisedPlayer" not in elo_db:
+        elo_db["RaisedPlayer"] = DEFAULT_ELO
+    
+    # First evaluate all agents against RaisedPlayer
+    print("\nEvaluating all agents against RaisedPlayer:")
+    for epoch in tqdm(epochs_to_evaluate, desc="vs RaisedPlayer"):
+        # Evaluate against RaisedPlayer
+        p_a_stack, p_b_stack = eval_players(
+            epoch, None, args.max_rounds, exp_dir, config, args.verbose, player_b_type="raise"
+        )
+        
+        # Determine outcome for Elo calculation
+        outcome = determine_outcome(p_a_stack, p_b_stack)
+        
+        # Log matchup performance
+        log_matchup_performance(
+            matchup_log_path, epoch, "raise_player", p_a_stack, p_b_stack, outcome
+        )
+        
+        # Print results
+        print(f"\nMatch: {epoch} vs {'raise_player'}")
+        print(f"Final stacks: {epoch}={p_a_stack}, {'raise_player'}={p_b_stack}")
+    
+    # Then run the regular matchups
+    print("\nEvaluating agent vs agent matchups:")
+    for matchup in tqdm(matchups, desc="Agent vs Agent"):
         epoch_a, epoch_b = matchup
         
         # Skip self-play for now
@@ -182,12 +239,10 @@ def main():
             continue
         
         # Evaluate the matchup
-        p_a_results, p_b_results, game_result = eval_players(epoch_a, epoch_b, args.max_rounds, exp_dir, config, args.verbose)
+        p_a_stack, p_b_stack = eval_players(
+            epoch_a, epoch_b, args.max_rounds, exp_dir, config, args.verbose
+        )
         
-        # Calculate statistics
-        p_a_stack = p_a_results[-1]["stack"]
-        p_b_stack = p_b_results[-1]["stack"]
-        rounds = len(p_a_results)
         
         # Determine outcome for Elo calculation
         outcome = determine_outcome(p_a_stack, p_b_stack)
@@ -203,10 +258,15 @@ def main():
         elo_db[agent_a] = new_rating_a
         elo_db[agent_b] = new_rating_b
         
+        # Log matchup performance
+        log_matchup_performance(
+            matchup_log_path, epoch_a, epoch_b, p_a_stack, p_b_stack, outcome
+        )
+        
         # Print results
         print(f"\nMatch: {epoch_a} vs {epoch_b}")
         print(f"Final stacks: {epoch_a}={p_a_stack}, {epoch_b}={p_b_stack}")
-        print(f"Rounds played: {rounds}")
+
         print(f"Elo before: {epoch_a}={rating_a:.1f}, {epoch_b}={rating_b:.1f}")
         print(f"Elo after: {epoch_a}={new_rating_a:.1f}, {epoch_b}={new_rating_b:.1f}")
         
@@ -215,19 +275,19 @@ def main():
     
     # Print final Elo ratings (sorted)
     print("\nFinal Elo Ratings:")
-    sorted_ratings = sorted([(int(agent), rating) for agent, rating in elo_db.items()], 
+    sorted_ratings = sorted([(agent, rating) for agent, rating in elo_db.items()], 
                            key=lambda x: x[1], reverse=True)
     for agent, rating in sorted_ratings:
         print(f"Agent {agent}: {rating:.1f}")
     
     # Plot Elo ratings
-    agents = [str(a) for a, _ in sorted_ratings]
+    agents = [a for a, _ in sorted_ratings]
     ratings = [r for _, r in sorted_ratings]
     
     plt.figure(figsize=(10, 6))
     plt.bar(agents, ratings)
     plt.axhline(y=DEFAULT_ELO, color='r', linestyle='--', alpha=0.3, label=f'Default ({DEFAULT_ELO})')
-    plt.xlabel("Agent Epoch")
+    plt.xlabel("Agent")
     plt.ylabel("Elo Rating")
     plt.title("Agent Elo Ratings")
     plt.xticks(rotation=45)
@@ -251,6 +311,37 @@ def main():
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(os.path.join(eval_dir, "elo_progression.png"))
+        
+        # Also plot performance against RaisedPlayer
+        if os.path.exists(matchup_log_path):
+            with open(matchup_log_path, 'r') as csvfile:
+                reader = csv.DictReader(csvfile)
+                raised_matchups = [row for row in reader if row['player_b'] == 'RaisedPlayer']
+                
+                if raised_matchups:
+                    # Group by epoch and calculate average stack difference
+                    raise_results = {}
+                    for row in raised_matchups:
+                        epoch = int(row['epoch_a'])
+                        stack_diff = int(row['a_stack']) - int(row['b_stack'])
+                        if epoch in raise_results:
+                            raise_results[epoch].append(stack_diff)
+                        else:
+                            raise_results[epoch] = [stack_diff]
+                    
+                    # Calculate average stack difference per epoch
+                    epochs = sorted(raise_results.keys())
+                    avg_stack_diffs = [sum(raise_results[e])/len(raise_results[e]) for e in epochs]
+                    
+                    plt.figure(figsize=(10, 6))
+                    plt.plot(epochs, avg_stack_diffs, marker='o')
+                    plt.axhline(y=0, color='r', linestyle='--', alpha=0.3)
+                    plt.xlabel("Epoch")
+                    plt.ylabel("Avg Stack Difference vs RaisedPlayer")
+                    plt.title("Performance Against RaisedPlayer Over Epochs")
+                    plt.grid(True, alpha=0.3)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(eval_dir, "raised_player_performance.png"))
 
 if __name__ == "__main__":
     main()
