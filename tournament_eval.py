@@ -70,16 +70,20 @@ def generate_window_matchups(window_epochs):
             matchups.append((epoch_a, epoch_b))
     return matchups
 
-def generate_previous_matchups(current_epoch, previous_epochs, sample_size):
-    """Generate matchups between current epoch and sampled previous epochs"""
+def generate_previous_matchups(current_epoch, previous_epochs, sample_size, elo_db, default_elo=DEFAULT_ELO):
+    """Generate matchups between current epoch and the top-performing previous epochs based on Elo ratings"""
     if not previous_epochs:
         return []
     
-    # Sample from previous epochs (with replacement if needed)
-    sample_count = min(sample_size, len(previous_epochs))
-    sampled_epochs = random.sample(previous_epochs, sample_count)
+    # Sort previous epochs by their Elo ratings (highest first)
+    sorted_epochs = sorted(previous_epochs, 
+                          key=lambda epoch: elo_db.get(str(epoch), default_elo),
+                          reverse=True)
     
-    return [(current_epoch, prev_epoch) for prev_epoch in sampled_epochs]
+    # Take the top sample_size epochs
+    top_epochs = sorted_epochs[:sample_size]
+    
+    return [(current_epoch, prev_epoch) for prev_epoch in top_epochs]
 
 def create_player(epoch, exp_dir, config):
     epoch_dir = os.path.join(exp_dir, f"{epoch}")
@@ -248,7 +252,7 @@ def main():
         if previous_epochs:  # Only for windows after the first one
             for epoch in window_epochs:
                 sample_size = window_size // 2
-                epoch_previous_matchups = generate_previous_matchups(epoch, previous_epochs, sample_size)
+                epoch_previous_matchups = generate_previous_matchups(epoch, previous_epochs, sample_size, elo_db)
                 previous_matchups.extend(epoch_previous_matchups)
         
         # # Add RaisedPlayer matchups for each epoch in the window
