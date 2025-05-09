@@ -14,4 +14,4 @@ exp_dir=$1
 num_procs=$2
 max_rounds=$3
 
-python tournament_eval.py $exp_dir --max_rounds=$max_rounds --processes=$num_procs
+python tournament_eval.py --exp_dir=$exp_dir --max_rounds=$max_rounds --processes=$num_procs
