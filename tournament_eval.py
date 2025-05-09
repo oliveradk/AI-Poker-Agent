@@ -252,11 +252,11 @@ def main():
                 epoch_previous_matchups = generate_previous_matchups(epoch, previous_epochs, sample_size)
                 previous_matchups.extend(epoch_previous_matchups)
         
-        # Add RaisedPlayer matchups for each epoch in the window
-        raised_matchups = [(epoch, "raise_player") for epoch in window_epochs]
+        # # Add RaisedPlayer matchups for each epoch in the window
+        # raised_matchups = [(epoch, "raise_player") for epoch in window_epochs]
         
         # Combine all matchups
-        all_matchups = window_matchups + previous_matchups + raised_matchups
+        all_matchups = window_matchups + previous_matchups
         print(f"Generated {len(all_matchups)} matchups ({len(window_matchups)} in-window, {len(previous_matchups)} with previous, {len(raised_matchups)} with RaisedPlayer)")
         
         # Execute matchups in parallel
@@ -309,69 +309,6 @@ def main():
                            key=lambda x: x[1], reverse=True)
     for agent, rating in sorted_ratings:
         print(f"Agent {agent}: {rating:.1f}")
-    
-    # Plot Elo ratings
-    agents = [a for a, _ in sorted_ratings]
-    ratings = [r for _, r in sorted_ratings]
-    
-    plt.figure(figsize=(10, 6))
-    plt.bar(agents, ratings)
-    plt.axhline(y=DEFAULT_ELO, color='r', linestyle='--', alpha=0.3, label=f'Default ({DEFAULT_ELO})')
-    plt.xlabel("Agent")
-    plt.ylabel("Elo Rating")
-    plt.title("Agent Elo Ratings")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig(os.path.join(eval_dir, "elo_ratings.png"))
-    
-    # Also plot Elo progression over epochs
-    epoch_ratings = [(int(agent), rating) for agent, rating in elo_db.items() if agent.isdigit()]
-    epoch_ratings.sort(key=lambda x: x[0])  # Sort by epoch
-    
-    if epoch_ratings:
-        epochs = [e for e, _ in epoch_ratings]
-        ratings = [r for _, r in epoch_ratings]
-        
-        plt.figure(figsize=(10, 6))
-        plt.plot(epochs, ratings, marker='o')
-        plt.axhline(y=DEFAULT_ELO, color='r', linestyle='--', alpha=0.3, label=f'Default ({DEFAULT_ELO})')
-        plt.xlabel("Epoch")
-        plt.ylabel("Elo Rating")
-        plt.title("Elo Rating Progression Over Epochs")
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(eval_dir, "elo_progression.png"))
-        
-        # Also plot performance against RaisedPlayer
-        if os.path.exists(matchup_log_path):
-            with open(matchup_log_path, 'r') as csvfile:
-                reader = csv.DictReader(csvfile)
-                raised_matchups = [row for row in reader if row['agent_b'] == 'raise']
-                
-                if raised_matchups:
-                    # Group by epoch and calculate average stack difference
-                    raise_results = {}
-                    for row in raised_matchups:
-                        epoch = int(row['agent_a'])
-                        stack_diff = int(row['a_stack']) - int(row['b_stack'])
-                        if epoch in raise_results:
-                            raise_results[epoch].append(stack_diff)
-                        else:
-                            raise_results[epoch] = [stack_diff]
-                    
-                    # Calculate average stack difference per epoch
-                    epochs = sorted(raise_results.keys())
-                    avg_stack_diffs = [sum(raise_results[e])/len(raise_results[e]) for e in epochs]
-                    
-                    plt.figure(figsize=(10, 6))
-                    plt.plot(epochs, avg_stack_diffs, marker='o')
-                    plt.axhline(y=0, color='r', linestyle='--', alpha=0.3)
-                    plt.xlabel("Epoch")
-                    plt.ylabel("Avg Stack Difference vs RaisedPlayer")
-                    plt.title("Performance Against RaisedPlayer Over Epochs")
-                    plt.grid(True, alpha=0.3)
-                    plt.tight_layout()
-                    plt.savefig(os.path.join(eval_dir, "raised_player_performance.png"))
 
 if __name__ == "__main__":
     main()
