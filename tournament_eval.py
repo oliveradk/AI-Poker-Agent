@@ -25,7 +25,7 @@ MATCHUP_LOG_FILENAME = "matchup_performances.csv"
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Evaluate poker agents using Elo rating system")
-    parser.add_argument("exp_dir", help="Experiment directory containing agent checkpoints")
+    parser.add_argument("--exp_dir", default="output/20250508_154014", help="Experiment directory containing agent checkpoints")
     parser.add_argument("--epochs", type=int, help="Number of epochs to evaluate (default: all available)")
     parser.add_argument("--max_rounds", type=int, default=250, help="Maximum number of rounds per match")
     parser.add_argument("--verbose", type=int, default=True, help="Verbosity level")
