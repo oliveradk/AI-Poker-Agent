@@ -8,6 +8,8 @@ import argparse
 import math
 import matplotlib.pyplot as plt
 import csv
+import multiprocessing
+from functools import partial
 
 # TODO: continually test againt player queue and raise player
 # Default configuration
@@ -26,6 +28,7 @@ def parse_arguments():
     parser.add_argument("--epochs", type=int, help="Number of epochs to evaluate (default: all available)")
     parser.add_argument("--max_rounds", type=int, default=250, help="Maximum number of rounds per match")
     parser.add_argument("--verbose", type=int, default=True, help="Verbosity level")
+    parser.add_argument("--processes", type=int, default=None, help="Number of parallel processes (default: CPU count)")
     return parser.parse_args()
 
 def load_or_create_elo_db(elo_db_path):
@@ -155,6 +158,38 @@ def log_matchup_performance(log_file, agent_a, agent_b, p_a_stack, p_b_stack, ou
             'outcome': outcome
         })
 
+def evaluate_single_matchup(matchup, max_rounds, exp_dir, config, verbose):
+    """Worker function to evaluate a single matchup in a separate process"""
+    epoch_a, epoch_b = matchup
+    
+    # Skip self-play
+    if epoch_a == epoch_b:
+        return None
+    
+    # Determine player type
+    player_b_type = "raise" if epoch_b == "raise_player" else "custom"
+    
+    # Evaluate the matchup
+    p_a_stack, p_b_stack = eval_players(
+        epoch_a, epoch_b, max_rounds, exp_dir, config, verbose, 
+        player_b_type=player_b_type
+    )
+    
+    agent_a = f"{epoch_a}"
+    agent_b = f"{epoch_b}" if player_b_type == "custom" else "raise"
+    
+    # Determine outcome for Elo calculation
+    outcome = determine_outcome(p_a_stack, p_b_stack)
+    
+    return {
+        'matchup': matchup,
+        'agent_a': agent_a,
+        'agent_b': agent_b,
+        'p_a_stack': p_a_stack,
+        'p_b_stack': p_b_stack,
+        'outcome': outcome
+    }
+
 def main():
     args = parse_arguments()
     
@@ -206,28 +241,39 @@ def main():
     matchups = select_matchups(epochs_to_evaluate, elo_db, new_epochs, n_matchups)
     print(f"Selected {len(matchups)} matchups for evaluation")
     
-    # Run all matchups (including vs RaisedPlayer) in a single loop
-    print("\nEvaluating all matchups:")
-    for matchup in tqdm(matchups, desc="Evaluating matchups"):
-        epoch_a, epoch_b = matchup
-        
-        # Skip self-play for now
-        if epoch_a == epoch_b:
-            continue
-        
-        # Determine player type
-        player_b_type = "raise" if epoch_b == "raise_player" else "custom"
-        
-        # Evaluate the matchup
-        p_a_stack, p_b_stack = eval_players(
-            epoch_a, epoch_b, args.max_rounds, exp_dir, config, args.verbose, 
-            player_b_type=player_b_type
-        )
-        agent_a = f"{epoch_a}"
-        agent_b = f"{epoch_b}" if player_b_type == "custom" else "raise"
-        
-        # Determine outcome for Elo calculation
-        outcome = determine_outcome(p_a_stack, p_b_stack)
+    # Set up multiprocessing
+    num_processes = args.processes if args.processes else multiprocessing.cpu_count()
+    print(f"Using {num_processes} processes for parallel evaluation")
+    
+    # Create a partial function with all the fixed arguments
+    worker_fn = partial(
+        evaluate_single_matchup, 
+        max_rounds=args.max_rounds, 
+        exp_dir=exp_dir, 
+        config=config, 
+        verbose=0  # Set to 0 to prevent output clutter in parallel processes
+    )
+    
+    # Run matchups in parallel
+    print("\nEvaluating all matchups in parallel:")
+    results = []
+    
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        # Use imap_unordered to get results as they complete
+        with tqdm(total=len(matchups), desc="Evaluating matchups") as pbar:
+            for result in pool.imap_unordered(worker_fn, matchups):
+                if result:  # Skip None results (self-play matchups)
+                    results.append(result)
+                    pbar.update(1)
+    
+    # Process all results and update Elo ratings
+    print("\nProcessing results and updating Elo ratings:")
+    for result in results:
+        agent_a = result['agent_a']
+        agent_b = result['agent_b']
+        p_a_stack = result['p_a_stack']
+        p_b_stack = result['p_b_stack']
+        outcome = result['outcome']
         
         # Log matchup performance
         log_matchup_performance(
@@ -249,10 +295,9 @@ def main():
         
         print(f"Elo before: {agent_a}={rating_a:.1f}, {agent_b}={rating_b:.1f}")
         print(f"Elo after: {agent_a}={new_rating_a:.1f}, {agent_b}={new_rating_b:.1f}")
-
-        
-        # Save Elo database after each match to ensure persistence
-        save_elo_db(elo_db, elo_db_path)
+    
+    # Save final Elo database
+    save_elo_db(elo_db, elo_db_path)
     
     # Print final Elo ratings (sorted)
     print("\nFinal Elo Ratings:")
