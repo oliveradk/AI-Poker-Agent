@@ -11,6 +11,12 @@ from q_learn_player import (
 )
 from mcts_player import search, _get_init_stacks, _get_valid_actions
 
+def create_emulator(player_num, small_blind_amount, ante_amount, blind_structure):
+    emulator = Emulator()
+    emulator.set_game_rule(player_num, float("inf"), small_blind_amount, ante_amount)
+    emulator.set_blind_structure(blind_structure)
+    return emulator
+
 
 class CustomPlayer(BasePokerPlayer):
     N_EHS_BINS = 5 
@@ -30,12 +36,11 @@ class CustomPlayer(BasePokerPlayer):
 
     
     def _set_emulator(self, player_num, small_blind_amount, ante_amount, blind_structure):
-        self.emulator = Emulator()
-        self.emulator.set_game_rule(player_num, float("inf"), small_blind_amount, ante_amount)
-        self.emulator.set_blind_structure(blind_structure)
+        self.emulator = create_emulator(player_num, small_blind_amount, ante_amount, blind_structure)
 
     def declare_action(self, valid_actions, hole_card, round_state):
-        if round_state["round_count"] == 1:
+        if not hasattr(self, "emulator"):
+            print("initializing emulator")
             self._init(round_state)
         if len(valid_actions) == 1: # not a real action if no choice
            return valid_actions[0]["action"]
