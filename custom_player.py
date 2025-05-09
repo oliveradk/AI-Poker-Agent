@@ -40,7 +40,6 @@ class CustomPlayer(BasePokerPlayer):
 
     def declare_action(self, valid_actions, hole_card, round_state):
         if not hasattr(self, "emulator"):
-            print("initializing emulator")
             self._init(round_state)
         if len(valid_actions) == 1: # not a real action if no choice
            return valid_actions[0]["action"]
