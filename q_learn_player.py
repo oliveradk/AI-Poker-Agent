@@ -50,8 +50,8 @@ def _get_raise_count(round_state):
 
 
 def init_Q_and_N(n_bins: int):
-    # Q[position, street, pot_size, street raises, last_aggressor, hand_strength_bin, action_idx] (5760)
-    Q = np.zeros((2, N_STREETS, 1+N_RAISES, 2, n_bins, N_ACTIONS))
+    # Q[position, street, street raises, last_aggressor, hand_strength_bin, action_idx] (5760)
+    Q = np.zeros((2, N_STREETS, 1+N_RAISES, 2, n_bins, N_ACTIONS)) #2 x 4 x 5 x 5 
     N = np.zeros((2, N_STREETS, 1+N_RAISES, 2, n_bins, N_ACTIONS))
     return Q, N
 
