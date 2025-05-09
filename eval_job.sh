@@ -11,5 +11,7 @@ module load conda/latest
 conda activate poker_mcts
 
 exp_dir=$1
+num_procs=$2
+max_rounds=$3
 
-python tournament_eval.py $exp_dir
+python tournament_eval.py $exp_dir --max_rounds=$max_rounds --processes=$num_procs
