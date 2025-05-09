@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import csv
 import multiprocessing
 from functools import partial
+from multiprocessing import Manager, Lock
 
 # TODO: continually test againt player queue and raise player
 # Default configuration
@@ -254,49 +255,61 @@ def main():
         verbose=0  # Set to 0 to prevent output clutter in parallel processes
     )
     
+    # Set up multiprocessing with shared resources
+    manager = Manager()
+    elo_lock = Lock()  # Lock for synchronizing Elo database updates
+    save_counter = manager.Value('i', 0)  # Shared counter for tracking when to save
+    save_frequency = max(1, len(matchups) // 10)  # Save after every ~10% of matchups
+    
     # Run matchups in parallel
-    print("\nEvaluating all matchups in parallel:")
-    results = []
+    print("\nEvaluating all matchups in parallel and updating Elo as results arrive:")
+    all_results = []
     
     with multiprocessing.Pool(processes=num_processes) as pool:
         # Use imap_unordered to get results as they complete
         with tqdm(total=len(matchups), desc="Evaluating matchups") as pbar:
             for result in pool.imap_unordered(worker_fn, matchups):
                 if result:  # Skip None results (self-play matchups)
-                    results.append(result)
+                    all_results.append(result)
+                    
+                    # Update Elo ratings as results come in
+                    agent_a = result['agent_a']
+                    agent_b = result['agent_b']
+                    p_a_stack = result['p_a_stack']
+                    p_b_stack = result['p_b_stack']
+                    outcome = result['outcome']
+                    
+                    # Log matchup performance
+                    log_matchup_performance(
+                        matchup_log_path, agent_a, agent_b, p_a_stack, p_b_stack, outcome
+                    )
+                    
+                    # Use lock to safely update the Elo database
+                    with elo_lock:
+                        # Get current Elo ratings
+                        rating_a = elo_db.get(agent_a, DEFAULT_ELO)
+                        rating_b = elo_db.get(agent_b, DEFAULT_ELO)
+                        
+                        # Update Elo ratings
+                        new_rating_a, new_rating_b = update_elo(rating_a, rating_b, outcome)
+                        elo_db[agent_a] = new_rating_a
+                        elo_db[agent_b] = new_rating_b
+                        
+                        # Increment save counter and save periodically
+                        save_counter.value += 1
+                        if save_counter.value % save_frequency == 0:
+                            save_elo_db(elo_db, elo_db_path)
+                    
+                    # Print results (outside the lock to not block other processes)
+                    print(f"\nMatch: {agent_a} vs {agent_b}")
+                    print(f"Final stacks: {agent_a}={p_a_stack}, {agent_b}={p_b_stack}")
+                    print(f"Elo before: {agent_a}={rating_a:.1f}, {agent_b}={rating_b:.1f}")
+                    print(f"Elo after: {agent_a}={new_rating_a:.1f}, {agent_b}={new_rating_b:.1f}")
+                    print(f"Completed {save_counter.value}/{len(matchups)} matchups")
+                    
                     pbar.update(1)
     
-    # Process all results and update Elo ratings
-    print("\nProcessing results and updating Elo ratings:")
-    for result in results:
-        agent_a = result['agent_a']
-        agent_b = result['agent_b']
-        p_a_stack = result['p_a_stack']
-        p_b_stack = result['p_b_stack']
-        outcome = result['outcome']
-        
-        # Log matchup performance
-        log_matchup_performance(
-            matchup_log_path, agent_a, agent_b, p_a_stack, p_b_stack, outcome
-        )
-        
-        # Print results
-        print(f"\nMatch: {agent_a} vs {agent_b}")
-        print(f"Final stacks: {agent_a}={p_a_stack}, {agent_b}={p_b_stack}")
-        
-        # Get current Elo ratings
-        rating_a = elo_db.get(agent_a, DEFAULT_ELO)
-        rating_b = elo_db.get(agent_b, DEFAULT_ELO)
-        
-        # Update Elo ratings
-        new_rating_a, new_rating_b = update_elo(rating_a, rating_b, outcome)
-        elo_db[agent_a] = new_rating_a
-        elo_db[agent_b] = new_rating_b
-        
-        print(f"Elo before: {agent_a}={rating_a:.1f}, {agent_b}={rating_b:.1f}")
-        print(f"Elo after: {agent_a}={new_rating_a:.1f}, {agent_b}={new_rating_b:.1f}")
-    
-    # Save final Elo database
+    # Make sure the final Elo database is saved
     save_elo_db(elo_db, elo_db_path)
     
     # Print final Elo ratings (sorted)
