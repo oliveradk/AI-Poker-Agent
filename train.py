@@ -8,7 +8,7 @@ import sys
 from pypokerengine.api.game import setup_config, start_poker
 from randomplayer import RandomPlayer
 from raise_player import RaisedPlayer
-from custom_player import CustomPlayer
+from mcts_player import MCTSPlayer
 
 
 import argparse
@@ -41,7 +41,7 @@ with open(os.path.join(exp_dir, "config.json"), "w") as f:
 np.random.seed(CONFIG["seed"])
 random.seed(CONFIG["seed"])
 
-my_player = CustomPlayer(
+my_player = MCTSPlayer(
     n_ehs_bins=CONFIG["n_ehs_bins"], 
     n_rollouts_train=CONFIG["n_rollouts_train"],
     n_rollouts_eval=CONFIG["n_rollouts_eval"], 
@@ -68,7 +68,7 @@ players_info = {
     }
 }
 
-def eval_against_player(player: CustomPlayer, n_eval_rounds: int, oppo, oppo_name, verbose: int=0,):
+def eval_against_player(player: MCTSPlayer, n_eval_rounds: int, oppo, oppo_name, verbose: int=0,):
     config = setup_config(max_round=n_eval_rounds, initial_stack=CONFIG["initial_stack"], small_blind_amount=CONFIG["small_blind_amount"])
     config.register_player(name=oppo_name, algorithm=oppo)
     config.register_player(name="my_player", algorithm=player)
@@ -77,10 +77,10 @@ def eval_against_player(player: CustomPlayer, n_eval_rounds: int, oppo, oppo_nam
     player.round_results = []
     return round_results, game_result
 
-def eval_against_random_player(player: CustomPlayer, n_eval_rounds: int, verbose: int=0):
+def eval_against_random_player(player: MCTSPlayer, n_eval_rounds: int, verbose: int=0):
     return eval_against_player(player, n_eval_rounds, RandomPlayer(), "random_player", verbose)
 
-def eval_against_raise_player(player: CustomPlayer, n_eval_rounds: int, verbose: int=0):
+def eval_against_raise_player(player: MCTSPlayer, n_eval_rounds: int, verbose: int=0):
     return eval_against_player(player, n_eval_rounds, RaisedPlayer(), "raise_player", verbose)
 
 # train eval loop
@@ -94,6 +94,7 @@ if CONFIG["load_dir"] is not None:
     round_results, game_result = eval_against_player(
         my_player, n_eval_rounds=CONFIG["n_eval_rounds"], oppo=oppo, oppo_name=CONFIG["eval_oppo"], verbose=1
     )
+    exit()
 
 for epoch in range(epochs):
     # create epoch dir

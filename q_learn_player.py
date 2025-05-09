@@ -1,5 +1,6 @@
 from pypokerengine.players import BasePokerPlayer
 import numpy as np
+import os
 from hand_eval import evaluate_hand
 
 REAL_ACTIONS = ["fold", "call", "raise"]
@@ -54,6 +55,14 @@ def init_Q_and_N(n_bins: int):
     N = np.zeros((2, N_STREETS, 1+N_RAISES, 2, n_bins, N_ACTIONS))
     return Q, N
 
+def load_Q_and_N(dir: str):
+    Q = np.load(os.path.join(dir, "Q.npy"))
+    N = np.load(os.path.join(dir, "N.npy"))
+    return Q, N
+
+def save_Q_and_N(Q, N, dir: str):
+    np.save(os.path.join(dir, "Q.npy"), Q)
+    np.save(os.path.join(dir, "N.npy"), N)
 
 
 def get_EHS(private_cards, community_cards, n_bins: int, n_samples: int=1000):
