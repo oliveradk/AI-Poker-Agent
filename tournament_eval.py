@@ -224,8 +224,15 @@ def main():
     # Set up matchup log file
     matchup_log_path = os.path.join(eval_dir, MATCHUP_LOG_FILENAME)
     
-    # Identify new epochs (not in elo_db)
-    existing_epochs = [int(epoch) for epoch in elo_db.keys() if epoch.isdigit()]
+    # Identify new epochs (not in matchup_performances.csv)
+    existing_epochs = []
+    if os.path.exists(matchup_log_path):
+        with open(matchup_log_path, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            # Extract unique agent_a values that are digits and convert to int
+            existing_epochs = set(int(row['agent_a']) for row in reader 
+                                if row['agent_a'].isdigit())
+    
     new_epochs = [epoch for epoch in epochs_to_evaluate if epoch not in existing_epochs]
     
     print(f"Evaluating epochs: {epochs_to_evaluate}")
