@@ -11,15 +11,14 @@ import csv
 import multiprocessing
 from functools import partial
 from multiprocessing import Manager, Lock
+import random
 
-# TODO: continually test againt player queue and raise player
 # Default configuration
 N_ROLLOUTS = 0
 EVAL_DL = 0
 STACK_MARGIN = 2000
 DEFAULT_ELO = 1200
 K_FACTOR = 32  # Elo K-factor (determines how quickly ratings change)
-MIN_MATCHUPS = 5  # Minimum number of matchups for new agents
 ELO_DB_FILENAME = "elo_ratings.json"
 MATCHUP_LOG_FILENAME = "matchup_performances.csv"
 
@@ -28,14 +27,13 @@ def parse_arguments():
     parser.add_argument("--exp_dir", default="output/20250508_154014", help="Experiment directory containing agent checkpoints")
     parser.add_argument("--epochs", type=int, help="Number of epochs to evaluate (default: all available)")
     parser.add_argument("--max_rounds", type=int, default=250, help="Maximum number of rounds per match")
-    parser.add_argument("--verbose", type=int, default=True, help="Verbosity level")
+    parser.add_argument("--verbose", type=int, default=1, help="Verbosity level")
     parser.add_argument("--processes", type=int, default=None, help="Number of parallel processes (default: CPU count)")
+    parser.add_argument("--window_size", type=int, default=10, help="Window size for matchup generation")
     return parser.parse_args()
 
-def load_or_create_elo_db(elo_db_path):
-    if os.path.exists(elo_db_path):
-        with open(elo_db_path, "r") as f:
-            return json.load(f)
+def create_empty_elo_db():
+    """Create a new empty Elo database"""
     return {}
 
 def save_elo_db(elo_db, elo_db_path):
@@ -64,43 +62,24 @@ def determine_outcome(p_a_stack, p_b_stack):
     else:
         return 0.5  # Draw
 
-def select_matchups(epochs, elo_db, new_epochs=None, n_matchups=None):
-    """Select matchups intelligently for accurate Elo evaluation
-    
-    For new agents: match against agents with well-established ratings
-    For all agents: prioritize matchups with agents of similar strength
-    """
-    all_agents = [f"{e}" for e in epochs]
+def generate_window_matchups(window_epochs):
+    """Generate all matchups between epochs in the current window"""
     matchups = []
-    
-    # If new_epochs is provided, focus on evaluating those
-    if new_epochs:
-        established_agents = [a for a in all_agents if a in elo_db and a not in [f"{e}" for e in new_epochs]]
-        
-        for new_epoch in new_epochs:
-            new_agent = f"{new_epoch}"
-            
-            # Ensure new agent plays against a diverse set of opponents
-            if established_agents:
-                # Sort established agents by Elo
-                sorted_established = sorted(established_agents, key=lambda a: elo_db.get(a, DEFAULT_ELO))
-                
-                # Select opponents across the Elo spectrum for calibration
-                num_opponents = min(MIN_MATCHUPS, len(established_agents))
-                step = max(1, len(established_agents) // num_opponents)
-                selected_opponents = [sorted_established[i] for i in range(0, len(sorted_established), step)][:num_opponents]
-                
-                for opponent in selected_opponents:
-                    matchups.append((int(new_agent), int(opponent)))
-            
-            # Also match against other new agents
-            for other_new in [f"{e}" for e in new_epochs]:
-                if other_new != new_agent:
-                    matchups.append((int(new_agent), int(other_new)))
-            
-            # Add RaisedPlayer matchup for every agent
-            matchups.append((int(new_agent), "raise_player"))
+    for i, epoch_a in enumerate(window_epochs):
+        for epoch_b in window_epochs[i+1:]:
+            matchups.append((epoch_a, epoch_b))
     return matchups
+
+def generate_previous_matchups(current_epoch, previous_epochs, sample_size):
+    """Generate matchups between current epoch and sampled previous epochs"""
+    if not previous_epochs:
+        return []
+    
+    # Sample from previous epochs (with replacement if needed)
+    sample_count = min(sample_size, len(previous_epochs))
+    sampled_epochs = random.sample(previous_epochs, sample_count)
+    
+    return [(current_epoch, prev_epoch) for prev_epoch in sampled_epochs]
 
 def create_player(epoch, exp_dir, config):
     epoch_dir = os.path.join(exp_dir, f"{epoch}")
@@ -208,46 +187,21 @@ def main():
     available_epochs = [int(d) for d in os.listdir(exp_dir) if os.path.isdir(os.path.join(exp_dir, d)) and d.isdigit()]
     # filter out epochs that don't have a model checkpoint
     available_epochs = [e for e in available_epochs if os.path.exists(os.path.join(exp_dir, f"{e}", "Q.npy"))]
+    available_epochs.sort()  # Ensure epochs are in ascending order
     
     # Determine which epochs to evaluate
     if args.epochs:
-        max_epoch = args.epochs
-        epochs_to_evaluate = [e for e in available_epochs if e < max_epoch]
+        epochs_to_evaluate = [e for e in available_epochs if e < args.epochs]
     else:
-        max_epoch = max(available_epochs) + 1
         epochs_to_evaluate = available_epochs
     
-    # Load or create Elo database
+    # Create empty Elo database and matchup log
     elo_db_path = os.path.join(eval_dir, ELO_DB_FILENAME)
-    elo_db = load_or_create_elo_db(elo_db_path)
-    
-    # Set up matchup log file
+    elo_db = create_empty_elo_db()
     matchup_log_path = os.path.join(eval_dir, MATCHUP_LOG_FILENAME)
     
-    # Identify new epochs (not in matchup_performances.csv)
-    existing_epochs = []
-    if os.path.exists(matchup_log_path):
-        with open(matchup_log_path, 'r') as csvfile:
-            reader = csv.DictReader(csvfile)
-            # Extract unique agent_a values that are digits and convert to int
-            existing_epochs = set(int(row['agent_a']) for row in reader 
-                                if row['agent_a'].isdigit())
-    
-    new_epochs = [epoch for epoch in epochs_to_evaluate if epoch not in existing_epochs]
-    
-    print(f"Evaluating epochs: {epochs_to_evaluate}")
-    print(f"New epochs to evaluate: {new_epochs}")
-    
-    # Select matchups for evaluation
-    if new_epochs:
-        # More matchups for new agents to establish accurate ratings
-        n_matchups = len(new_epochs) * MIN_MATCHUPS
-    else:
-        # Fewer matchups if just updating existing ratings
-        n_matchups = len(epochs_to_evaluate) // 2
-    
-    matchups = select_matchups(epochs_to_evaluate, elo_db, new_epochs, n_matchups)
-    print(f"Selected {len(matchups)} matchups for evaluation")
+    # Initialize for RaisedPlayer
+    elo_db["raise"] = DEFAULT_ELO
     
     # Set up multiprocessing
     num_processes = args.processes if args.processes else multiprocessing.cpu_count()
@@ -265,59 +219,89 @@ def main():
     # Set up multiprocessing with shared resources
     manager = Manager()
     elo_lock = Lock()  # Lock for synchronizing Elo database updates
-    save_counter = manager.Value('i', 0)  # Shared counter for tracking when to save
-    save_frequency = max(1, len(matchups) // 10)  # Save after every ~10% of matchups
     
-    # Run matchups in parallel
-    print("\nEvaluating all matchups in parallel and updating Elo as results arrive:")
+    # Window-based matchup generation and execution
+    window_size = args.window_size
+    total_windows = (len(epochs_to_evaluate) + window_size - 1) // window_size
+    
+    # Add RaisedPlayer to each window
     all_results = []
     
-    with multiprocessing.Pool(processes=num_processes) as pool:
-        # Use imap_unordered to get results as they complete
-        with tqdm(total=len(matchups), desc="Evaluating matchups") as pbar:
-            for result in pool.imap_unordered(worker_fn, matchups):
-                if result:  # Skip None results (self-play matchups)
-                    all_results.append(result)
-                    
-                    # Update Elo ratings as results come in
-                    agent_a = result['agent_a']
-                    agent_b = result['agent_b']
-                    p_a_stack = result['p_a_stack']
-                    p_b_stack = result['p_b_stack']
-                    outcome = result['outcome']
-                    
-                    # Log matchup performance
-                    log_matchup_performance(
-                        matchup_log_path, agent_a, agent_b, p_a_stack, p_b_stack, outcome
-                    )
-                    
-                    # Use lock to safely update the Elo database
-                    with elo_lock:
-                        # Get current Elo ratings
-                        rating_a = elo_db.get(agent_a, DEFAULT_ELO)
-                        rating_b = elo_db.get(agent_b, DEFAULT_ELO)
-                        
-                        # Update Elo ratings
-                        new_rating_a, new_rating_b = update_elo(rating_a, rating_b, outcome)
-                        elo_db[agent_a] = new_rating_a
-                        elo_db[agent_b] = new_rating_b
-                        
-                        # Increment save counter and save periodically
-                        save_counter.value += 1
-                        if save_counter.value % save_frequency == 0:
-                            save_elo_db(elo_db, elo_db_path)
-                    
-                    # Print results (outside the lock to not block other processes)
-                    print(f"\nMatch: {agent_a} vs {agent_b}")
-                    print(f"Final stacks: {agent_a}={p_a_stack}, {agent_b}={p_b_stack}")
-                    print(f"Elo before: {agent_a}={rating_a:.1f}, {agent_b}={rating_b:.1f}")
-                    print(f"Elo after: {agent_a}={new_rating_a:.1f}, {agent_b}={new_rating_b:.1f}")
-                    print(f"Completed {save_counter.value}/{len(matchups)} matchups")
-                    
-                    pbar.update(1)
+    print(f"Processing {total_windows} windows with size {window_size}")
     
-    # Make sure the final Elo database is saved
-    save_elo_db(elo_db, elo_db_path)
+    for window_idx in range(total_windows):
+        print(f"\nProcessing window {window_idx+1}/{total_windows}")
+        
+        # Define current window epochs
+        start_idx = window_idx * window_size
+        end_idx = min((window_idx + 1) * window_size, len(epochs_to_evaluate))
+        window_epochs = epochs_to_evaluate[start_idx:end_idx]
+        
+        print(f"Window epochs: {window_epochs}")
+        
+        # Generate matchups within this window
+        window_matchups = generate_window_matchups(window_epochs)
+        
+        # Generate matchups with previous windows
+        previous_epochs = epochs_to_evaluate[:start_idx]
+        previous_matchups = []
+        
+        if previous_epochs:  # Only for windows after the first one
+            for epoch in window_epochs:
+                sample_size = window_size // 2
+                epoch_previous_matchups = generate_previous_matchups(epoch, previous_epochs, sample_size)
+                previous_matchups.extend(epoch_previous_matchups)
+        
+        # Add RaisedPlayer matchups for each epoch in the window
+        raised_matchups = [(epoch, "raise_player") for epoch in window_epochs]
+        
+        # Combine all matchups
+        all_matchups = window_matchups + previous_matchups + raised_matchups
+        print(f"Generated {len(all_matchups)} matchups ({len(window_matchups)} in-window, {len(previous_matchups)} with previous, {len(raised_matchups)} with RaisedPlayer)")
+        
+        # Execute matchups in parallel
+        window_results = []
+        
+        with multiprocessing.Pool(processes=num_processes) as pool:
+            with tqdm(total=len(all_matchups), desc=f"Window {window_idx+1} matchups") as pbar:
+                for result in pool.imap_unordered(worker_fn, all_matchups):
+                    if result:  # Skip None results
+                        window_results.append(result)
+                        
+                        # Update Elo ratings as results come in
+                        agent_a = result['agent_a']
+                        agent_b = result['agent_b']
+                        p_a_stack = result['p_a_stack']
+                        p_b_stack = result['p_b_stack']
+                        outcome = result['outcome']
+                        
+                        # Log matchup performance
+                        log_matchup_performance(
+                            matchup_log_path, agent_a, agent_b, p_a_stack, p_b_stack, outcome
+                        )
+                        
+                        # Use lock to safely update the Elo database
+                        with elo_lock:
+                            # Get current Elo ratings
+                            rating_a = elo_db.get(agent_a, DEFAULT_ELO)
+                            rating_b = elo_db.get(agent_b, DEFAULT_ELO)
+                            
+                            # Update Elo ratings
+                            new_rating_a, new_rating_b = update_elo(rating_a, rating_b, outcome)
+                            elo_db[agent_a] = new_rating_a
+                            elo_db[agent_b] = new_rating_b
+                        
+                        pbar.update(1)
+        
+        # Save progress after each window
+        save_elo_db(elo_db, elo_db_path)
+        all_results.extend(window_results)
+        
+        # Print window summary
+        print(f"\nWindow {window_idx+1} complete. Current Elo ratings:")
+        window_agents = [str(e) for e in window_epochs] + ['raise']
+        for agent in window_agents:
+            print(f"Agent {agent}: {elo_db.get(agent, DEFAULT_ELO):.1f}")
     
     # Print final Elo ratings (sorted)
     print("\nFinal Elo Ratings:")
