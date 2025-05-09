@@ -229,7 +229,7 @@ def main():
     
     print(f"Processing {total_windows} windows with size {window_size}")
     
-    for window_idx in range(total_windows):
+    for window_idx in tqdm(range(total_windows), desc="Processing windows"):
         print(f"\nProcessing window {window_idx+1}/{total_windows}")
         
         # Define current window epochs
@@ -237,7 +237,6 @@ def main():
         end_idx = min((window_idx + 1) * window_size, len(epochs_to_evaluate))
         window_epochs = epochs_to_evaluate[start_idx:end_idx]
         
-        print(f"Window epochs: {window_epochs}")
         
         # Generate matchups within this window
         window_matchups = generate_window_matchups(window_epochs)
@@ -257,7 +256,6 @@ def main():
         
         # Combine all matchups
         all_matchups = window_matchups + previous_matchups
-        print(f"Generated {len(all_matchups)} matchups ({len(window_matchups)} in-window, {len(previous_matchups)} with previous, {len(raised_matchups)} with RaisedPlayer)")
         
         # Execute matchups in parallel
         window_results = []
